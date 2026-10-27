@@ -2,9 +2,15 @@
 
 An advanced Android keyboard in the Material 3 Expressive style, specialized for **foldable devices (Google Pixel Fold)**, tablets, and wide screens, built with Kotlin and Jetpack Compose.
 
-<!-- Expressive Keyboard Duo Banner / Screenshots -->
+<!-- Expressive Keyboard Duo Banner & Showcases -->
 <p align="center">
-  <img src="docs/banner.png" alt="Expressive Keyboard Duo" width="600">
+  <img src="docs/assets/banner.svg" alt="Expressive Keyboard Duo Banner" width="100%">
+</p>
+
+<p align="center">
+  <img src="docs/assets/homescreen.jpg" alt="Expressive Keyboard Duo Home" width="280">
+  <img src="docs/assets/showcase1.jpg" alt="Expressive Keyboard Duo Split Showcase" width="280">
+  <img src="docs/assets/showcase2.jpg" alt="Expressive Keyboard Duo Fold Showcase" width="280">
 </p>
 
 > [!NOTE]

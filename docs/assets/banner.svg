@@ -1,0 +1,111 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 420" width="100%" height="100%">
+  <defs>
+    <!-- Градиент маски, чтобы клавиатура мягко уходила в нижнюю кромку -->
+    <linearGradient id="fadeDown" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.35" />
+      <stop offset="65%" stop-color="#ffffff" stop-opacity="0.18" />
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0.0" />
+    </linearGradient>
+
+    <!-- Стили клавиш -->
+    <style>
+      .bg { fill: #181513; }
+      .title { font-family: -apple-system, BlinkMacSystemFont, "Google Sans", "Segoe UI", Roboto, sans-serif; font-weight: 700; font-size: 52px; fill: #F5EBE6; }
+      .pill-bg { fill: #E06D53; }
+      .pill-text { font-family: -apple-system, BlinkMacSystemFont, "Google Sans", "Segoe UI", Roboto, sans-serif; font-weight: 800; font-size: 32px; fill: #181513; }
+      .icon-stroke { stroke: #F5EBE6; stroke-width: 3.5; stroke-linecap: round; stroke-linejoin: round; fill: none; }
+      .key { fill: none; stroke: #F5EBE6; stroke-width: 2.2; }
+    </style>
+  </defs>
+
+  <!-- Фон (глубокий тёмный кофе/эспрессо) -->
+  <rect width="1200" height="420" class="bg" rx="16" />
+
+  <!-- ВЕРХНЯЯ ЧАСТЬ: Иконка Foldable + Название -->
+  <g transform="translate(600, 140)">
+    <!-- SVG-пиктограмма полуоткрытого фолда (книжка под углом) -->
+    <g transform="translate(-410, -38)">
+      <!-- Левая створка -->
+      <path d="M 12,6 L 36,12 L 36,66 L 12,60 Z" class="icon-stroke" stroke-opacity="0.9" />
+      <!-- Шарнир (центральная линия) -->
+      <line x1="36" y1="12" x2="36" y2="66" class="icon-stroke" stroke-dasharray="2 3" stroke-opacity="0.6" />
+      <!-- Правая створка (раскрытая в перспективу) -->
+      <path d="M 36,12 L 68,4 L 68,58 L 36,66 Z" class="icon-stroke" />
+    </g>
+
+    <!-- Заголовок: Expressive Keyboard -->
+    <text x="-320" y="14" class="title">Expressive Keyboard</text>
+
+    <!-- Акцентный бейдж-пилюля Duo -->
+    <rect x="250" y="-30" width="112" height="56" rx="28" class="pill-bg" />
+    <text x="306" y="9" text-anchor="middle" class="pill-text">Duo</text>
+  </g>
+
+  <!-- НИЖНЯЯ ЧАСТЬ: Раздельная клавиатура под полупрозрачной маской -->
+  <g mask="url(#keyboardMask)" opacity="0.8" transform="translate(0, 10)">
+    <mask id="keyboardMask">
+      <rect x="0" y="210" width="1200" height="210" fill="url(#fadeDown)" />
+    </mask>
+
+    <!-- Левый кластер клавиатуры -->
+    <g transform="translate(140, 230)">
+      <!-- Ряд 1 -->
+      <rect x="0" y="0" width="60" height="44" rx="14" class="key" />
+      <rect x="70" y="0" width="60" height="44" rx="14" class="key" />
+      <rect x="140" y="0" width="60" height="44" rx="14" class="key" />
+      <rect x="210" y="0" width="60" height="44" rx="14" class="key" />
+      <rect x="280" y="0" width="60" height="44" rx="14" class="key" />
+
+      <!-- Ряд 2 -->
+      <rect x="15" y="54" width="60" height="44" rx="14" class="key" />
+      <rect x="85" y="54" width="60" height="44" rx="14" class="key" />
+      <rect x="155" y="54" width="60" height="44" rx="14" class="key" />
+      <rect x="225" y="54" width="60" height="44" rx="14" class="key" />
+      <rect x="295" y="54" width="60" height="44" rx="14" class="key" />
+
+      <!-- Ряд 3 -->
+      <rect x="0" y="108" width="75" height="44" rx="14" class="key" />
+      <rect x="85" y="108" width="60" height="44" rx="14" class="key" />
+      <rect x="155" y="108" width="60" height="44" rx="14" class="key" />
+      <rect x="225" y="108" width="60" height="44" rx="14" class="key" />
+      <rect x="295" y="108" width="60" height="44" rx="14" class="key" />
+
+      <!-- Нижний ряд (левый пробел) -->
+      <rect x="0" y="162" width="80" height="44" rx="16" class="key" />
+      <rect x="90" y="162" width="70" height="44" rx="16" class="key" />
+      <rect x="170" y="162" width="185" height="44" rx="18" class="key" />
+    </g>
+
+    <!-- Центральный шарнирный зазор (отступ для сгиба экрана фолда) -->
+    <line x1="600" y1="220" x2="600" y2="420" stroke="#F5EBE6" stroke-opacity="0.12" stroke-width="2" stroke-dasharray="6 6" />
+
+    <!-- Правый кластер клавиатуры -->
+    <g transform="translate(705, 230)">
+      <!-- Ряд 1 -->
+      <rect x="0" y="0" width="60" height="44" rx="14" class="key" />
+      <rect x="70" y="0" width="60" height="44" rx="14" class="key" />
+      <rect x="140" y="0" width="60" height="44" rx="14" class="key" />
+      <rect x="210" y="0" width="60" height="44" rx="14" class="key" />
+      <rect x="280" y="0" width="60" height="44" rx="14" class="key" />
+
+      <!-- Ряд 2 -->
+      <rect x="0" y="54" width="60" height="44" rx="14" class="key" />
+      <rect x="70" y="54" width="60" height="44" rx="14" class="key" />
+      <rect x="140" y="54" width="60" height="44" rx="14" class="key" />
+      <rect x="210" y="54" width="60" height="44" rx="14" class="key" />
+      <rect x="280" y="54" width="60" height="44" rx="14" class="key" />
+
+      <!-- Ряд 3 -->
+      <rect x="0" y="108" width="60" height="44" rx="14" class="key" />
+      <rect x="70" y="108" width="60" height="44" rx="14" class="key" />
+      <rect x="140" y="108" width="60" height="44" rx="14" class="key" />
+      <rect x="210" y="108" width="60" height="44" rx="14" class="key" />
+      <rect x="280" y="108" width="75" height="44" rx="14" class="key" />
+
+      <!-- Нижний ряд (правый пробел) -->
+      <rect x="0" y="162" width="185" height="44" rx="18" class="key" />
+      <rect x="195" y="162" width="70" height="44" rx="16" class="key" />
+      <rect x="275" y="162" width="80" height="44" rx="16" class="key" />
+    </g>
+  </g>
+</svg>
