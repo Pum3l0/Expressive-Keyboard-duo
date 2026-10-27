@@ -1,7 +1,5 @@
 name: Release APK
 
-# Релиз создаётся при пуше тега (git tag v8.0.1 && git push --tags)
-# или вручную во вкладке Actions — тогда тег будет v8.0.<номер запуска>.
 on:
   push:
     tags: [ "v*" ]
@@ -27,11 +25,12 @@ jobs:
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.ref_type == 'tag' && github.ref_name || format('v8.0.{0}', github.run_number) }}
-          name: Expressive Keyboard ${{ github.ref_type == 'tag' && github.ref_name || format('8.0 (build {0})', github.run_number) }}
+          tag_name: ${{ github.ref_type == 'tag' && github.ref_name || format('v11.1.2-duo.{0}', github.run_number) }}
+          name: Expressive Keyboard Duo ${{ github.ref_type == 'tag' && github.ref_name || format('v11.1.2-duo.{0}', github.run_number) }}
           body: |
-            app-release.apk — быстрая версия, ставьте её.
-            app-debug.apk — отладочная (ставится рядом как отдельное приложение).
+            Expressive Keyboard Duo release build.
+            - Release APK: optimized production build.
+            - Debug APK: debug build (installs side-by-side as a separate app).
           files: |
             app/build/outputs/apk/release/*.apk
             app/build/outputs/apk/debug/*.apk
