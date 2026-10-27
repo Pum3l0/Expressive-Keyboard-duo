@@ -794,6 +794,68 @@ object WordPredictorEngine {
         scheduleSave(500L)
     }
 
+    /** Импорт персонального словаря Gboard (.txt / .tsv) */
+    fun importGboardDictionary(context: Context, uri: Uri): Result<Int> = runCatching {
+        var count = 0
+        context.contentResolver.openInputStream(uri)?.use { stream ->
+            stream.bufferedReader().useLines { lines ->
+                for (line in lines) {
+                    val l = line.trim()
+                    if (l.isEmpty() || l.startsWith("#")) continue
+                    val parts = l.split('\t')
+                    val word = parts.getOrNull(0)?.trim().orEmpty()
+                    if (word.length < 2) continue
+                    val shortcut = parts.getOrNull(1)?.trim().orEmpty()
+                    val locale = parts.getOrNull(2)?.trim().orEmpty()
+                    val langCode = when {
+                        locale.isNotEmpty() -> locale.substringBefore('-').substringBefore('_').lowercase()
+                        word.firstOrNull()?.let(::isCyrillic) == true -> "ru"
+                        else -> "en"
+                    }
+                    val k = "$langCode:${word.lowercase()}"
+                    userWords[k] = max(userWords[k] ?: 0, 3)
+                    if (shortcut.isNotEmpty()) {
+                        runCatching {
+                            val values = android.content.ContentValues().apply {
+                                put(android.provider.UserDictionary.Words.WORD, word)
+                                put(android.provider.UserDictionary.Words.SHORTCUT, shortcut)
+                                put(android.provider.UserDictionary.Words.LOCALE, if (locale.isNotEmpty()) locale else Locale.getDefault().toString())
+                                put(android.provider.UserDictionary.Words.FREQUENCY, 250)
+                            }
+                            context.contentResolver.insert(android.provider.UserDictionary.Words.CONTENT_URI, values)
+                        }
+                    }
+                    count++
+                }
+            }
+        }
+        flush()
+        count
+    }
+
+    /** Экспорт персонального словаря в формате Gboard (.tsv) */
+    fun exportGboardDictionary(context: Context, uri: Uri): Result<Int> = runCatching {
+        var count = 0
+        context.contentResolver.openOutputStream(uri)?.use { stream ->
+            stream.bufferedWriter().use { writer ->
+                writer.write("# Gboard Personal Dictionary Export\n")
+                writer.write("# Word\tShortcut\tLocale\n")
+                val langMap = Languages.all.associateBy { it.id }
+                for ((k, _) in userWords.entries.sortedBy { it.key }) {
+                    val parts = k.split(':', limit = 2)
+                    if (parts.size < 2) continue
+                    val lang = parts[0]
+                    val word = parts[1]
+                    val sc = personalShortcuts.entries.firstOrNull { it.value.equals(word, ignoreCase = true) }?.key.orEmpty()
+                    val loc = langMap[lang]?.locale ?: lang
+                    writer.write("$word\t$sc\t$loc\n")
+                    count++
+                }
+            }
+        }
+        count
+    }
+
     fun flush() = scheduleSave(0L)
 
     fun clearUserData() {

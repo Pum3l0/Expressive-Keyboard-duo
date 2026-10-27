@@ -53,6 +53,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.waitForUpOrCancellation
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.ui.zIndex
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -385,7 +386,8 @@ internal fun KeyView(
     actions: KeyboardActions,
     glideEnabled: Boolean,
     numberRow: Boolean,
-    modifier: Modifier
+    modifier: Modifier,
+    hSpace: Dp = 0.dp
 ) {
     val pluginState = PluginRepository.active
     val variants = remember(key, upper, pluginState) { key.variants(upper) }
@@ -472,6 +474,7 @@ internal fun KeyView(
     Box(
         modifier = modifier
             .onGloballyPositioned { holder.coords = it }
+            .padding(horizontal = hSpace / 2)
             .graphicsLayer {
                 when (effect) {
                     PressEffect.SCALE -> {
@@ -531,6 +534,7 @@ internal fun KeyView(
                 val wordStep = 36.dp.toPx()
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false)
+                    down.consume()
                     val id = down.id
                     val k = cKey
                     val act = cActions
@@ -600,6 +604,20 @@ internal fun KeyView(
                                     }
                                     if (picker) continue
                                     val dx = ch.position.x - down.position.x
+                                    val dy = ch.position.y - down.position.y
+                                    if (!swiped && dy < -swipe) {
+                                        swiped = true
+                                        act.keyTick()
+                                        val swipeAction = cSettings.spaceLeftSwipeUp
+                                        when (swipeAction) {
+                                            "CLIPBOARD" -> act.togglePanel(ActivePanel.CLIPBOARD)
+                                            "EMOJI" -> act.togglePanel(ActivePanel.EMOJI)
+                                            "VOICE" -> act.togglePanel(ActivePanel.VOICE)
+                                            "TRANSLATE" -> act.togglePanel(ActivePanel.TRANSLATE)
+                                            else -> Unit
+                                        }
+                                        break
+                                    }
                                     when (mode) {
                                         "LANGUAGE" -> if (!swiped && abs(dx) > swipe) {
                                             swiped = true
@@ -1478,6 +1496,7 @@ object Toolbar {
         add(ToolDef("clipboard", "Буфер обмена", "clipboard", Icons.Rounded.ContentPaste, null))
         add(ToolDef("emoji", "Эмодзи", "emoji", Icons.Rounded.EmojiEmotions, null))
         add(ToolDef("one_handed", "Одна рука", "one_handed", Icons.Rounded.SwapHoriz, null))
+        add(ToolDef("split_toggle", "Режим сплита", "split_toggle", Icons.AutoMirrored.Rounded.CallSplit, null))
         add(ToolDef("incognito", "Инкогнито", "incognito", Icons.Rounded.VisibilityOff, null))
         add(ToolDef("settings", "Настройки", "settings", Icons.Rounded.Settings, null))
         add(ToolDef("hide", "Скрыть клавиатуру", "hide", Icons.Rounded.KeyboardHide, null))
@@ -1534,6 +1553,20 @@ internal fun ToolbarPill(state: KeyboardState, actions: KeyboardActions, setting
             id == "clipboard" -> actions.togglePanel(ActivePanel.CLIPBOARD)
             id == "emoji" -> actions.togglePanel(ActivePanel.EMOJI)
             id == "one_handed" -> KeyboardPrefs.edit(context) { putString("one_handed", if (settings.oneHanded == "OFF") "RIGHT" else "OFF") }
+            id == "split_toggle" -> {
+                val next = when (settings.splitKeyboard) {
+                    "AUTO" -> "ON"
+                    "ON" -> "OFF"
+                    else -> "AUTO"
+                }
+                KeyboardPrefs.edit(context) { putString("split_keyboard", next) }
+                val msg = when (next) {
+                    "ON" -> "Сплит: Включен"
+                    "OFF" -> "Сплит: Выключен"
+                    else -> "Сплит: Авто"
+                }
+                Toast.makeText(context, tr(msg), Toast.LENGTH_SHORT).show()
+            }
             id == "incognito" -> {
                 KeyboardPrefs.edit(context) { putBoolean("incognito", !settings.incognito) }
                 Toast.makeText(context, tr(if (settings.incognito) "Инкогнито выключено" else "Инкогнито: слова и буфер не запоминаются"), Toast.LENGTH_SHORT).show()
@@ -1601,6 +1634,12 @@ internal fun ToolbarPill(state: KeyboardState, actions: KeyboardActions, setting
     ) {
         for (id in order) {
             val def = byId[id] ?: continue
+            val configuration = LocalConfiguration.current
+            val isSplit = when (settings.splitKeyboard) {
+                "ON" -> true
+                "OFF" -> false
+                else -> configuration.screenWidthDp >= 600
+            }
             key(id) {
                 val selected = when (id) {
                     "plugins" -> state.panel == ActivePanel.PLUGINS
@@ -1610,6 +1649,7 @@ internal fun ToolbarPill(state: KeyboardState, actions: KeyboardActions, setting
                     "clipboard" -> state.panel == ActivePanel.CLIPBOARD
                     "emoji" -> state.panel == ActivePanel.EMOJI || state.panel == ActivePanel.EMOJI_SEARCH
                     "one_handed" -> settings.oneHanded != "OFF"
+                    "split_toggle" -> isSplit
                     "incognito" -> settings.incognito
                     else -> false
                 }
@@ -1698,10 +1738,12 @@ fun KeyboardRoot(
     val baseSkin = PluginRepository.activeSkin(raw)
     val skin = remember(baseSkin, dark) { baseSkin?.forMode(dark) }
     val configuration = LocalConfiguration.current
+    val posture = FoldPosture.detect(configuration)
     val landscape = configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
-    val settings = remember(raw, skin, landscape, configuration.screenHeightDp) {
+    val settings = remember(raw, skin, landscape, configuration.screenHeightDp, configuration.screenWidthDp) {
         val s = skin?.applyColors(raw) ?: raw
-        if (landscape) s.forLandscape(configuration.screenHeightDp) else s
+        val postureResolved = s.forPosture(posture)
+        if (landscape) postureResolved.forLandscape(configuration.screenHeightDp) else postureResolved
     }
     ExpressiveTheme(settings) {
         val palette = rememberKeyPalette(settings)
@@ -1744,7 +1786,6 @@ fun KeyboardRoot(
             Surface(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(topStart = (skin?.corner ?: 28f).dp, topEnd = (skin?.corner ?: 28f).dp),
-                // при размытии окна фон рисует само окно (дымка поверх размытия)
                 color = if (blurDp != null) Color.Transparent else palette.background
             ) {
                 Box(
@@ -1770,7 +1811,6 @@ fun KeyboardRoot(
                     Box(Modifier.fillMaxWidth().navigationBarsPadding().padding(bottom = settings.bottomOffsetDp.dp)) {
                         KeyboardScreen(state, actions, voice, settings, palette, font)
                     }
-                    // улучшение текста: плашка с индикатором поверх клавиатуры
                     AiGlowOverlay(state.aiBusy, state.aiDone, palette, font)
                 }
             }
@@ -1805,11 +1845,16 @@ internal fun KeyboardScreen(
     DisposableEffect(layer) {
         onDispose { if (KeyboardGeometry.layer === layer) KeyboardGeometry.layer = null }
     }
+    val configuration = LocalConfiguration.current
+    val extraSideDp = if (settings.adaptiveSidePadding && configuration.screenWidthDp > 500) {
+        ((configuration.screenWidthDp - 500) * 0.08f).coerceIn(0f, 48f)
+    } else 0f
+    val sidePadding = (settings.sidePaddingDp + extraSideDp).dp
     val gap = if (settings.landscape) 4.dp else 8.dp
 
     Box(Modifier.fillMaxWidth().onGloballyPositioned { layer.coords = it }) {
         Column(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = settings.sidePaddingDp.dp, vertical = gap),
+            modifier = Modifier.fillMaxWidth().padding(horizontal = sidePadding, vertical = gap),
             verticalArrangement = Arrangement.spacedBy(gap)
         ) {
             if (settings.editBar && !settings.landscape) EditBar(state, actions, palette)
@@ -1913,6 +1958,207 @@ internal fun OneHandRail(modifier: Modifier, palette: KeyPalette, mode: String, 
 }
 
 @Composable
+internal fun CentralGapWidget(
+    slot: String,
+    style: String,
+    opacity: Float,
+    splitGapDp: Float,
+    palette: KeyPalette,
+    actions: KeyboardActions,
+    font: FontFamily,
+    modifier: Modifier = Modifier
+) {
+    if (splitGapDp < 36f || slot == "NONE") {
+        Spacer(modifier.width(splitGapDp.dp))
+        return
+    }
+
+    Box(
+        modifier = modifier.width(splitGapDp.dp).fillMaxHeight(),
+        contentAlignment = Alignment.Center
+    ) {
+        when (slot) {
+            "CREASE_LINE" -> {
+                when (style) {
+                    "GLOW" -> {
+                        Box(
+                            Modifier.width(6.dp).fillMaxHeight(0.85f)
+                                .clip(CircleShape)
+                                .background(palette.accent.copy(alpha = opacity * 0.85f))
+                        )
+                    }
+                    "LINE" -> {
+                        Box(
+                            Modifier.width(2.dp).fillMaxHeight(0.9f)
+                                .clip(CircleShape)
+                                .background(palette.outline.copy(alpha = opacity * 0.9f))
+                        )
+                    }
+                    "DOTS" -> {
+                        Column(
+                            Modifier.fillMaxHeight(0.85f),
+                            verticalArrangement = Arrangement.SpaceEvenly,
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            repeat(7) {
+                                Box(
+                                    Modifier.size(4.dp).clip(CircleShape)
+                                        .background(palette.accent.copy(alpha = opacity))
+                                )
+                            }
+                        }
+                    }
+                    "GRADIENT" -> {
+                        Box(
+                            Modifier.width(4.dp).fillMaxHeight(0.9f)
+                                .clip(CircleShape)
+                                .background(
+                                    Brush.verticalGradient(
+                                        listOf(
+                                            palette.accent.copy(alpha = 0.1f),
+                                            palette.accent.copy(alpha = opacity),
+                                            palette.accent.copy(alpha = 0.1f)
+                                        )
+                                    )
+                                )
+                        )
+                    }
+                }
+            }
+            "NUMPAD" -> {
+                val numbers = listOf("1", "2", "3", "4", "5", "6", "7", "8", "9", "0")
+                Column(
+                    Modifier.fillMaxHeight(),
+                    verticalArrangement = Arrangement.spacedBy(2.dp, Alignment.CenterVertically),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    numbers.chunked(3).forEach { row ->
+                        Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                            row.forEach { num ->
+                                Box(
+                                    Modifier.size(26.dp).clip(RoundedCornerShape(8.dp))
+                                        .background(palette.func)
+                                        .clickable {
+                                            actions.keyTick()
+                                            actions.commitKey(KeyModel(num), num)
+                                        },
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(num, color = palette.onFunc, style = TextStyle(fontFamily = font, fontSize = 11.sp, fontWeight = FontWeight.Bold))
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            "SYMBOLS" -> {
+                val symbols = listOf("!", "?", ",", ".", "@", "#", "$", "%", "&")
+                Column(
+                    Modifier.fillMaxHeight(),
+                    verticalArrangement = Arrangement.spacedBy(2.dp, Alignment.CenterVertically),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    symbols.chunked(3).forEach { row ->
+                        Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                            row.forEach { sym ->
+                                Box(
+                                    Modifier.size(26.dp).clip(RoundedCornerShape(8.dp))
+                                        .background(palette.func)
+                                        .clickable {
+                                            actions.keyTick()
+                                            actions.commitKey(KeyModel(sym), sym)
+                                        },
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(sym, color = palette.onFunc, style = TextStyle(fontFamily = font, fontSize = 11.sp, fontWeight = FontWeight.Bold))
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            "NAV" -> {
+                Column(
+                    Modifier.fillMaxHeight(),
+                    verticalArrangement = Arrangement.spacedBy(3.dp, Alignment.CenterVertically),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(3.dp)) {
+                        Box(
+                            Modifier.size(26.dp).clip(CircleShape).background(palette.func)
+                                .clickable { actions.keyTick(); actions.swipeSpace(-1) },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(Icons.AutoMirrored.Rounded.KeyboardArrowLeft, "←", tint = palette.onFunc, modifier = Modifier.size(16.dp))
+                        }
+                        Box(
+                            Modifier.size(26.dp).clip(CircleShape).background(palette.func)
+                                .clickable { actions.keyTick(); actions.swipeSpace(1) },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(Icons.AutoMirrored.Rounded.KeyboardArrowRight, "→", tint = palette.onFunc, modifier = Modifier.size(16.dp))
+                        }
+                    }
+                }
+            }
+            else -> Spacer(Modifier.width(splitGapDp.dp))
+        }
+    }
+}
+
+internal fun splitRow(
+    row: KeyRow,
+    splitMode: String,
+    splitSpacebar: Boolean
+): Pair<List<KeyModel>, List<KeyModel>> {
+    val spaceIdx = row.keys.indexOfFirst { it.type == KeyType.SPACE }
+    if (spaceIdx >= 0) {
+        if (splitSpacebar) {
+            val spaceKey = row.keys[spaceIdx]
+            val halfWeight = max(1.1f, spaceKey.weight / 2f)
+            val leftSpace = spaceKey.copy(weight = halfWeight)
+            val rightSpace = spaceKey.copy(weight = halfWeight)
+            val left = row.keys.subList(0, spaceIdx) + leftSpace
+            val right = listOf(rightSpace) + row.keys.subList(spaceIdx + 1, row.keys.size)
+            return left to right
+        } else {
+            val left = row.keys.subList(0, spaceIdx)
+            val right = row.keys.subList(spaceIdx + 1, row.keys.size)
+            return left to right
+        }
+    }
+
+    val totalKeys = row.keys.size
+    if (totalKeys <= 1) return row.keys to emptyList()
+
+    val letterIndices = row.keys.indices.filter {
+        val k = row.keys[it]
+        k.type == KeyType.CHARACTER && k.label.length == 1 && k.label[0].isLetter()
+    }
+
+    val splitIdx = if (letterIndices.isNotEmpty()) {
+        val mid = (letterIndices.size + 1) / 2
+        letterIndices[mid - 1] + 1
+    } else {
+        (totalKeys + 1) / 2
+    }
+
+    val leftList = row.keys.take(splitIdx).toMutableList()
+    val rightList = row.keys.drop(splitIdx).toMutableList()
+
+    if (splitMode == "DUPLICATE" && letterIndices.size >= 2) {
+        val leftLetterKey = leftList.lastOrNull { it.type == KeyType.CHARACTER && it.label.length == 1 && it.label[0].isLetter() }
+        val rightLetterKey = rightList.firstOrNull { it.type == KeyType.CHARACTER && it.label.length == 1 && it.label[0].isLetter() }
+        if (leftLetterKey != null && rightLetterKey != null) {
+            leftList.add(rightLetterKey)
+            rightList.add(0, leftLetterKey)
+        }
+    }
+
+    return leftList to rightList
+}
+
+@Composable
 internal fun KeyGrid(
     state: KeyboardState,
     actions: KeyboardActions,
@@ -1944,39 +2190,213 @@ internal fun KeyGrid(
     val dense = page == 0 && rows.any { r -> r.keys.count { it.type == KeyType.CHARACTER } >= 11 }
     val hSpace = (if (dense) min(settings.keySpacingDp, 4f) else settings.keySpacingDp).dp
 
-    Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(settings.rowSpacingDp.dp)) {
-        rows.forEach { row ->
-            val isNumberRow = row.heightWeight < 1f
-            Row(Modifier.fillMaxWidth().weight(row.heightWeight), horizontalArrangement = Arrangement.spacedBy(hSpace)) {
-                for (key in row.keys) {
-                    if (key.type == KeyType.SPACER) {
-                        Spacer(Modifier.weight(key.weight))
-                        continue
-                    }
-                    val isChar = key.type == KeyType.CHARACTER
-                    KeyView(
-                        key = key,
-                        label = when {
-                            key.type == KeyType.SPACE && settings.incognito -> "🕶 ${key.label}"
-                            key.type == KeyType.GLOBE -> lang.label
-                            isChar -> key.shownLabel(upper)
-                            else -> key.label
-                        },
-                        upper = upper && isChar,
-                        shift = if (key.type == KeyType.SHIFT) shift else ShiftState.OFF,
-                        enterAction = if (key.type == KeyType.ENTER) enter else 0,
-                        settings = settings,
-                        palette = palette,
-                        font = font,
-                        popup = popup,
-                        layer = layer,
-                        glide = glide,
-                        actions = actions,
-                        glideEnabled = glideEnabled,
-                        numberRow = isNumberRow,
-                        modifier = Modifier.weight(key.weight).fillMaxHeight()
-                    )
+    val configuration = LocalConfiguration.current
+    val isSplit = when (settings.splitKeyboard) {
+        "ON" -> true
+        "OFF" -> false
+        else -> configuration.screenWidthDp >= 600
+    }
+    val splitGap = settings.splitGapDp.dp
+
+    Box(Modifier.fillMaxSize()) {
+        Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(settings.rowSpacingDp.dp)) {
+            rows.forEachIndexed { rowIdx, row ->
+                val isNumberRow = row.heightWeight < 1f
+                val isStaggered = isSplit && settings.splitLayout == "STAGGERED" && !isNumberRow && row.keys.any { it.type == KeyType.CHARACTER }
+                val letterRowIndex = if (settings.showNumberRow && state.symbolsPage == 0) rowIdx - 1 else rowIdx
+                val staggerOffset = when {
+                    !isStaggered -> 0.dp
+                    letterRowIndex == 1 -> 12.dp
+                    letterRowIndex == 2 -> 24.dp
+                    else -> 0.dp
                 }
+
+                Row(Modifier.fillMaxWidth().weight(row.heightWeight), horizontalArrangement = Arrangement.spacedBy(0.dp)) {
+                    if (isSplit) {
+                        val hasSpaceKey = row.keys.any { it.type == KeyType.SPACE }
+                        if (hasSpaceKey && !settings.splitSpacebar) {
+                            val spaceKey = row.keys.first { it.type == KeyType.SPACE }
+                            val (leftKeys, rightKeys) = splitRow(row, settings.splitMode, false)
+                            val leftWeight = leftKeys.sumOf { it.weight.toDouble() }.toFloat().coerceAtLeast(1f)
+                            val rightWeight = rightKeys.sumOf { it.weight.toDouble() }.toFloat().coerceAtLeast(1f)
+                            Row(Modifier.weight(leftWeight).fillMaxHeight(), horizontalArrangement = Arrangement.spacedBy(0.dp)) {
+                                for (key in leftKeys) {
+                                    KeyView(
+                                        key = key,
+                                        label = if (key.type == KeyType.GLOBE) lang.label else key.label,
+                                        upper = false,
+                                        shift = ShiftState.OFF,
+                                        enterAction = if (key.type == KeyType.ENTER) enter else 0,
+                                        settings = settings,
+                                        palette = palette,
+                                        font = font,
+                                        popup = popup,
+                                        layer = layer,
+                                        glide = glide,
+                                        actions = actions,
+                                        glideEnabled = false,
+                                        numberRow = false,
+                                        modifier = Modifier.weight(key.weight).fillMaxHeight(),
+                                        hSpace = hSpace
+                                    )
+                                }
+                            }
+                            KeyView(
+                                key = spaceKey,
+                                label = if (settings.incognito) "🕶 ${spaceKey.label}" else spaceKey.label,
+                                upper = false,
+                                shift = ShiftState.OFF,
+                                enterAction = 0,
+                                settings = settings,
+                                palette = palette,
+                                font = font,
+                                popup = popup,
+                                layer = layer,
+                                glide = glide,
+                                actions = actions,
+                                glideEnabled = false,
+                                numberRow = false,
+                                modifier = Modifier.weight(max(3f, spaceKey.weight)).fillMaxHeight(),
+                                hSpace = hSpace
+                            )
+                            Row(Modifier.weight(rightWeight).fillMaxHeight(), horizontalArrangement = Arrangement.spacedBy(0.dp)) {
+                                for (key in rightKeys) {
+                                    KeyView(
+                                        key = key,
+                                        label = if (key.type == KeyType.GLOBE) lang.label else key.label,
+                                        upper = false,
+                                        shift = ShiftState.OFF,
+                                        enterAction = if (key.type == KeyType.ENTER) enter else 0,
+                                        settings = settings,
+                                        palette = palette,
+                                        font = font,
+                                        popup = popup,
+                                        layer = layer,
+                                        glide = glide,
+                                        actions = actions,
+                                        glideEnabled = false,
+                                        numberRow = false,
+                                        modifier = Modifier.weight(key.weight).fillMaxHeight(),
+                                        hSpace = hSpace
+                                    )
+                                }
+                            }
+                        } else {
+                            val (leftKeys, rightKeys) = splitRow(row, settings.splitMode, settings.splitSpacebar)
+                            Row(Modifier.weight(1f).fillMaxHeight(), horizontalArrangement = Arrangement.spacedBy(0.dp)) {
+                                if (staggerOffset > 0.dp) Spacer(Modifier.width(staggerOffset))
+                                for (key in leftKeys) {
+                                    if (key.type == KeyType.SPACER) {
+                                        Spacer(Modifier.weight(key.weight))
+                                        continue
+                                    }
+                                    val isChar = key.type == KeyType.CHARACTER
+                                    KeyView(
+                                        key = key,
+                                        label = when {
+                                            key.type == KeyType.SPACE && settings.incognito -> "🕶 ${key.label}"
+                                            key.type == KeyType.GLOBE -> lang.label
+                                            isChar -> key.shownLabel(upper)
+                                            else -> key.label
+                                        },
+                                        upper = upper && isChar,
+                                        shift = if (key.type == KeyType.SHIFT) shift else ShiftState.OFF,
+                                        enterAction = if (key.type == KeyType.ENTER) enter else 0,
+                                        settings = settings,
+                                        palette = palette,
+                                        font = font,
+                                        popup = popup,
+                                        layer = layer,
+                                        glide = glide,
+                                        actions = actions,
+                                        glideEnabled = glideEnabled,
+                                        numberRow = isNumberRow,
+                                        modifier = Modifier.weight(key.weight).fillMaxHeight(),
+                                        hSpace = hSpace
+                                    )
+                                }
+                            }
+                            Spacer(Modifier.width(splitGap))
+                            Row(Modifier.weight(1f).fillMaxHeight(), horizontalArrangement = Arrangement.spacedBy(0.dp)) {
+                                for (key in rightKeys) {
+                                    if (key.type == KeyType.SPACER) {
+                                        Spacer(Modifier.weight(key.weight))
+                                        continue
+                                    }
+                                    val isChar = key.type == KeyType.CHARACTER
+                                    KeyView(
+                                        key = key,
+                                        label = when {
+                                            key.type == KeyType.SPACE && settings.incognito -> "🕶 ${key.label}"
+                                            key.type == KeyType.GLOBE -> lang.label
+                                            isChar -> key.shownLabel(upper)
+                                            else -> key.label
+                                        },
+                                        upper = upper && isChar,
+                                        shift = if (key.type == KeyType.SHIFT) shift else ShiftState.OFF,
+                                        enterAction = if (key.type == KeyType.ENTER) enter else 0,
+                                        settings = settings,
+                                        palette = palette,
+                                        font = font,
+                                        popup = popup,
+                                        layer = layer,
+                                        glide = glide,
+                                        actions = actions,
+                                        glideEnabled = glideEnabled,
+                                        numberRow = isNumberRow,
+                                        modifier = Modifier.weight(key.weight).fillMaxHeight(),
+                                        hSpace = hSpace
+                                    )
+                                }
+                                if (staggerOffset > 0.dp) Spacer(Modifier.width(staggerOffset))
+                            }
+                        }
+                    } else {
+                        for (key in row.keys) {
+                            if (key.type == KeyType.SPACER) {
+                                Spacer(Modifier.weight(key.weight))
+                                continue
+                            }
+                            val isChar = key.type == KeyType.CHARACTER
+                            KeyView(
+                                key = key,
+                                label = when {
+                                    key.type == KeyType.SPACE && settings.incognito -> "🕶 ${key.label}"
+                                    key.type == KeyType.GLOBE -> lang.label
+                                    isChar -> key.shownLabel(upper)
+                                    else -> key.label
+                                },
+                                upper = upper && isChar,
+                                shift = if (key.type == KeyType.SHIFT) shift else ShiftState.OFF,
+                                enterAction = if (key.type == KeyType.ENTER) enter else 0,
+                                settings = settings,
+                                palette = palette,
+                                font = font,
+                                popup = popup,
+                                layer = layer,
+                                glide = glide,
+                                actions = actions,
+                                glideEnabled = glideEnabled,
+                                numberRow = isNumberRow,
+                                modifier = Modifier.weight(key.weight).fillMaxHeight(),
+                                hSpace = hSpace
+                            )
+                        }
+                    }
+                }
+            }
+        }
+        if (isSplit && settings.centralGapSlot != "NONE") {
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                CentralGapWidget(
+                    slot = settings.centralGapSlot,
+                    style = settings.creaseStyle,
+                    opacity = settings.creaseOpacity,
+                    splitGapDp = settings.splitGapDp,
+                    palette = palette,
+                    actions = actions,
+                    font = font
+                )
             }
         }
     }

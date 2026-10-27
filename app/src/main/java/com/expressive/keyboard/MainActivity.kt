@@ -155,10 +155,11 @@ class MainActivity : ComponentActivity() {
 }
 
 enum class SettingsPage(val title: String, val subtitle: String, val icon: ImageVector, val shape: ExpressiveShapePreset) {
-    HOME("Expressive Keyboard", "", Icons.Rounded.Keyboard, ExpressiveShapePreset.COOKIE_12),
+    HOME("Expressive Keyboard Duo", "", Icons.Rounded.Keyboard, ExpressiveShapePreset.COOKIE_12),
     LOOK("Тема и шрифт", "Светлая или тёмная тема, форма акцентов, шрифт, анимации", Icons.Rounded.Palette, ExpressiveShapePreset.COOKIE_12),
     COLORS("Цвета и фон", "Свой цвет, цвета клавиш, прозрачность, картинка под клавишами", Icons.Rounded.ColorLens, ExpressiveShapePreset.FLOWER_6),
     KEYS("Размер и кнопки", "Высота клавиш, ряд цифр, кнопки у пробела, режим одной руки", Icons.Rounded.Keyboard, ExpressiveShapePreset.CLOVER_4),
+    FOLD("Складные экраны (Fold)", "Раздельный режим (Split), дублирование букв и центральный отступ", Icons.AutoMirrored.Rounded.CallSplit, ExpressiveShapePreset.CLOVER_4),
     LAYOUT("Свои места клавиш", "Поменяйте местами буквы, цифры и знаки или поставьте свои", Icons.Rounded.SwapHoriz, ExpressiveShapePreset.SUNNY_8),
     ICONS("Эмодзи и иконки", "Стиль эмодзи (Twemoji, Noto, Blob…), свои иконки кнопок", Icons.Rounded.EmojiEmotions, ExpressiveShapePreset.SUNNY_8),
     TOOLBAR("Панель инструментов", "Какие кнопки видны и в каком порядке", Icons.Rounded.DragIndicator, ExpressiveShapePreset.FLOWER_6),
@@ -226,28 +227,129 @@ internal fun importBackground(context: Context, uri: Uri): Boolean = runCatching
 @Composable
 fun SettingsScreen(settings: KeyboardSettings) {
     var page by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(SettingsPage.HOME) }
-    androidx.activity.compose.BackHandler(enabled = page != SettingsPage.HOME) { page = SettingsPage.HOME }
-    AnimatedContent(
-        targetState = page,
-        transitionSpec = {
-            val forward = targetState != SettingsPage.HOME
-            val enterSpring = spring<IntOffset>(dampingRatio = 0.85f, stiffness = 380f)
-            if (forward) {
-                (slideInHorizontally(enterSpring) { it / 3 } + fadeIn(tween(220))) togetherWith
-                    (slideOutHorizontally(enterSpring) { -it / 6 } + fadeOut(tween(160)))
-            } else {
-                (slideInHorizontally(enterSpring) { -it / 6 } + fadeIn(tween(220))) togetherWith
-                    (slideOutHorizontally(enterSpring) { it / 3 } + fadeOut(tween(160)))
+    val configuration = LocalConfiguration.current
+    val isWide = configuration.screenWidthDp >= 600
+
+    if (isWide) {
+        Row(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceContainer)) {
+            Surface(
+                modifier = Modifier.width(280.dp).fillMaxHeight(),
+                color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                tonalElevation = 2.dp
+            ) {
+                SidebarNavigation(selectedPage = page, onSelectPage = { page = it })
             }
-        },
-        label = "settingsPage"
-    ) { p ->
-        SettingsPageScaffold(p, settings, onNavigate = { page = it })
+            Box(Modifier.width(1.dp).fillMaxHeight().background(MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)))
+            Box(Modifier.weight(1f).fillMaxHeight()) {
+                SettingsPageScaffold(page, settings, onNavigate = { page = it }, isWide = true)
+            }
+        }
+    } else {
+        androidx.activity.compose.BackHandler(enabled = page != SettingsPage.HOME) { page = SettingsPage.HOME }
+        AnimatedContent(
+            targetState = page,
+            transitionSpec = {
+                val forward = targetState != SettingsPage.HOME
+                val enterSpring = spring<IntOffset>(dampingRatio = 0.85f, stiffness = 380f)
+                if (forward) {
+                    (slideInHorizontally(enterSpring) { it / 3 } + fadeIn(tween(220))) togetherWith
+                        (slideOutHorizontally(enterSpring) { -it / 6 } + fadeOut(tween(160)))
+                } else {
+                    (slideInHorizontally(enterSpring) { -it / 6 } + fadeIn(tween(220))) togetherWith
+                        (slideOutHorizontally(enterSpring) { it / 3 } + fadeOut(tween(160)))
+                }
+            },
+            label = "settingsPage"
+        ) { p ->
+            SettingsPageScaffold(p, settings, onNavigate = { page = it }, isWide = false)
+        }
     }
 }
 
 @Composable
-internal fun SettingsPageScaffold(page: SettingsPage, settings: KeyboardSettings, onNavigate: (SettingsPage) -> Unit) {
+internal fun SidebarNavigation(selectedPage: SettingsPage, onSelectPage: (SettingsPage) -> Unit) {
+    val cs = MaterialTheme.colorScheme
+    val groups = listOf(
+        "Главная" to listOf(SettingsPage.HOME),
+        "Складные устройства" to listOf(SettingsPage.FOLD),
+        "Внешний вид" to listOf(SettingsPage.LOOK, SettingsPage.COLORS, SettingsPage.KEYS, SettingsPage.LAYOUT, SettingsPage.ICONS, SettingsPage.TOOLBAR),
+        "Набор текста" to listOf(SettingsPage.LANGUAGES, SettingsPage.TYPING, SettingsPage.GESTURES, SettingsPage.CLIPBOARD),
+        "Отклик и расширения" to listOf(SettingsPage.FEEDBACK, SettingsPage.PLUGINS),
+        "Прочее" to listOf(SettingsPage.BACKUP, SettingsPage.ABOUT)
+    )
+
+    Column(Modifier.fillMaxSize().padding(horizontal = 12.dp, vertical = 16.dp).statusBarsPadding()) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Icon(Icons.AutoMirrored.Rounded.CallSplit, null, tint = cs.primary, modifier = Modifier.size(28.dp))
+            Text("Expressive Duo", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.ExtraBold, color = cs.onSurface)
+        }
+
+        Spacer(Modifier.height(12.dp))
+
+        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+            for ((groupTitle, pages) in groups) {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(
+                        tr(groupTitle),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = cs.primary,
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+                        fontWeight = FontWeight.Bold
+                    )
+                    for (p in pages) {
+                        val isSelected = p == selectedPage
+                        val spec = remember(p.shape) {
+                            WavySpec(p.shape.profile, p.shape.defaultWaves, p.shape.defaultAmplitude / 100f)
+                        }
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(18.dp))
+                                .then(
+                                    if (isSelected) Modifier.wavyBackground(spec, cs.primaryContainer)
+                                    else Modifier.background(Color.Transparent)
+                                )
+                                .clickable { onSelectPage(p) }
+                                .padding(horizontal = 12.dp, vertical = 10.dp)
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(12.dp)
+                            ) {
+                                Icon(
+                                    p.icon,
+                                    null,
+                                    tint = if (isSelected) cs.onPrimaryContainer else cs.onSurfaceVariant,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                                Text(
+                                    tr(p.title),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = if (isSelected) FontWeight.ExtraBold else FontWeight.Medium,
+                                    color = if (isSelected) cs.onPrimaryContainer else cs.onSurface,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+internal fun SettingsPageScaffold(
+    page: SettingsPage,
+    settings: KeyboardSettings,
+    onNavigate: (SettingsPage) -> Unit,
+    isWide: Boolean = false
+) {
     val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
     val cs = MaterialTheme.colorScheme
     var testText by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf("") }
@@ -257,9 +359,24 @@ internal fun SettingsPageScaffold(page: SettingsPage, settings: KeyboardSettings
         containerColor = cs.surfaceContainer,
         topBar = {
             LargeTopAppBar(
-                title = { Text(tr(page.title), fontWeight = FontWeight.ExtraBold, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                title = {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        if (page == SettingsPage.HOME && !isWide) {
+                            Icon(
+                                Icons.AutoMirrored.Rounded.CallSplit,
+                                contentDescription = null,
+                                tint = cs.primary,
+                                modifier = Modifier.size(30.dp)
+                            )
+                        }
+                        Text(tr(page.title), fontWeight = FontWeight.ExtraBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                },
                 navigationIcon = {
-                    if (page != SettingsPage.HOME) {
+                    if (page != SettingsPage.HOME && !isWide) {
                         FilledTonalIconButton(onClick = { onNavigate(SettingsPage.HOME) }, modifier = Modifier.padding(start = 8.dp)) {
                             Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Назад")
                         }
@@ -295,6 +412,7 @@ internal fun SettingsPageScaffold(page: SettingsPage, settings: KeyboardSettings
                     SettingsPage.LOOK -> LookPage(settings)
                     SettingsPage.COLORS -> ColorsPage(settings)
                     SettingsPage.KEYS -> KeysPage(settings)
+                    SettingsPage.FOLD -> FoldPage(settings)
                     SettingsPage.LAYOUT -> LayoutEditorPage(settings)
                     SettingsPage.ICONS -> IconsPage(settings)
                     SettingsPage.TOOLBAR -> ToolbarPage(settings)
@@ -382,7 +500,9 @@ internal fun HomePage(settings: KeyboardSettings, onNavigate: (SettingsPage) -> 
         onMic = { micLauncher.launch(Manifest.permission.RECORD_AUDIO) }
     )
     PreviewSection(settings)
+    val isWide = LocalConfiguration.current.screenWidthDp >= 600
     val groups = listOf(
+        "Складные устройства" to listOf(SettingsPage.FOLD),
         "Внешний вид" to listOf(SettingsPage.LOOK, SettingsPage.COLORS, SettingsPage.KEYS, SettingsPage.LAYOUT, SettingsPage.ICONS, SettingsPage.TOOLBAR),
         "Набор текста" to listOf(SettingsPage.LANGUAGES, SettingsPage.TYPING, SettingsPage.GESTURES, SettingsPage.CLIPBOARD),
         "Отклик и расширения" to listOf(SettingsPage.FEEDBACK, SettingsPage.PLUGINS),
@@ -391,9 +511,24 @@ internal fun HomePage(settings: KeyboardSettings, onNavigate: (SettingsPage) -> 
     var i = 0
     for ((title, pages) in groups) {
         SettingsSection(title) {
-            for (p in pages) {
-                val idx = i++
-                CategoryTile(p, idx) { onNavigate(p) }
+            if (isWide && pages.size > 1) {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    pages.chunked(2).forEach { pair ->
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            Box(Modifier.weight(1f)) { CategoryTile(pair[0], i++) { onNavigate(pair[0]) } }
+                            if (pair.size > 1) {
+                                Box(Modifier.weight(1f)) { CategoryTile(pair[1], i++) { onNavigate(pair[1]) } }
+                            } else {
+                                Spacer(Modifier.weight(1f))
+                            }
+                        }
+                    }
+                }
+            } else {
+                for (p in pages) {
+                    val idx = i++
+                    CategoryTile(p, idx) { onNavigate(p) }
+                }
             }
         }
     }
@@ -635,13 +770,41 @@ internal fun ColorsPage(settings: KeyboardSettings) {
 @Composable
 internal fun KeysPage(settings: KeyboardSettings) {
     val context = LocalContext.current
-    PreviewSection(settings)
-    SettingsSection("Размеры") {
+    val configuration = LocalConfiguration.current
+    val activePosture = remember(configuration) { FoldPosture.detect(configuration) }
+    var targetPostureId by remember { mutableStateOf("CURRENT") }
+    val currentPosture = if (targetPostureId == "CURRENT") activePosture else FoldPosture.fromId(targetPostureId)
+    val postureSettings = remember(settings, currentPosture) { settings.forPosture(currentPosture) }
+
+    PreviewSection(postureSettings)
+
+    SettingsSection("Настройка профиля экрана") {
+        ChoiceItem(
+            icon = Icons.Rounded.Devices,
+            title = "Профиль экрана",
+            subtitle = tr("Размеры для экрана «{0}»", tr(currentPosture.title)),
+            options = listOf(
+                "CURRENT" to tr("Текущий ({0})", tr(activePosture.title)),
+                "unfolded_landscape" to "Разложен горизонтально",
+                "unfolded_portrait" to "Разложен вертикально",
+                "folded_portrait" to "Сложен вертикально",
+                "folded_landscape" to "Сложен горизонтально"
+            ),
+            selected = targetPostureId
+        ) { id ->
+            targetPostureId = id
+        }
+    }
+
+    SettingsSection("Размеры (" + tr(currentPosture.title) + ")") {
         SliderItem(
             icon = Icons.Rounded.Height, title = "Высота клавиш",
-            value = settings.keyHeightDp, range = 44f..68f,
+            value = postureSettings.keyHeightDp, range = 44f..68f,
             format = { "${it.roundToInt()} dp" },
-            onCommit = { v -> KeyboardPrefs.edit(context) { putFloat("key_height_dp", v) } }
+            onDrag = { v ->
+                KeyboardPrefs.edit(context) { putFloat("key_height_dp_${currentPosture.id}", v) }
+            },
+            onCommit = { v -> KeyboardPrefs.edit(context) { putFloat("key_height_dp_${currentPosture.id}", v) } }
         )
         SliderItem(
             icon = Icons.Rounded.RoundedCorner, title = "Скругление клавиш",
@@ -651,21 +814,30 @@ internal fun KeysPage(settings: KeyboardSettings) {
         )
         SliderItem(
             icon = Icons.Rounded.SpaceBar, title = "Промежуток между клавишами",
-            value = settings.keySpacingDp, range = 2f..8f,
+            value = postureSettings.keySpacingDp, range = 2f..8f,
             format = { "${it.roundToInt()} dp" },
-            onCommit = { v -> KeyboardPrefs.edit(context) { putFloat("key_spacing_dp", v) } }
+            onDrag = { v ->
+                KeyboardPrefs.edit(context) { putFloat("key_spacing_dp_${currentPosture.id}", v) }
+            },
+            onCommit = { v -> KeyboardPrefs.edit(context) { putFloat("key_spacing_dp_${currentPosture.id}", v) } }
         )
         SliderItem(
             icon = Icons.Rounded.Menu, title = "Промежуток между рядами",
-            value = settings.rowSpacingDp, range = 4f..12f,
+            value = postureSettings.rowSpacingDp, range = 4f..12f,
             format = { "${it.roundToInt()} dp" },
-            onCommit = { v -> KeyboardPrefs.edit(context) { putFloat("row_spacing_dp", v) } }
+            onDrag = { v ->
+                KeyboardPrefs.edit(context) { putFloat("row_spacing_dp_${currentPosture.id}", v) }
+            },
+            onCommit = { v -> KeyboardPrefs.edit(context) { putFloat("row_spacing_dp_${currentPosture.id}", v) } }
         )
         SliderItem(
             icon = Icons.Rounded.Straighten, title = "Отступы по бокам",
-            value = settings.sidePaddingDp, range = 0f..32f,
+            value = postureSettings.sidePaddingDp, range = 0f..48f,
             format = { "${it.roundToInt()} dp" },
-            onCommit = { v -> KeyboardPrefs.edit(context) { putFloat("side_padding_dp", v) } }
+            onDrag = { v ->
+                KeyboardPrefs.edit(context) { putFloat("side_padding_dp_${currentPosture.id}", v) }
+            },
+            onCommit = { v -> KeyboardPrefs.edit(context) { putFloat("side_padding_dp_${currentPosture.id}", v) } }
         )
         SliderItem(
             icon = Icons.Rounded.VerticalAlignBottom, title = "Отступ снизу",
@@ -673,6 +845,24 @@ internal fun KeysPage(settings: KeyboardSettings) {
             format = { "${it.roundToInt()} dp" },
             onCommit = { v -> KeyboardPrefs.edit(context) { putFloat("bottom_offset_dp", v) } }
         )
+        val isOverrideSet = settings.postureOverrides.containsKey("key_height_dp_${currentPosture.id}") ||
+                settings.postureOverrides.containsKey("side_padding_dp_${currentPosture.id}") ||
+                settings.postureOverrides.containsKey("key_spacing_dp_${currentPosture.id}") ||
+                settings.postureOverrides.containsKey("row_spacing_dp_${currentPosture.id}")
+        if (isOverrideSet) {
+            ActionItem(
+                icon = Icons.Rounded.RestartAlt,
+                title = "Вернуть авто-адаптацию",
+                subtitle = tr("Сбросить ручные размеры для «{0}»", tr(currentPosture.title)),
+                onClick = {
+                    KeyboardPrefs.edit(context) {
+                        listOf("key_height_dp", "side_padding_dp", "key_spacing_dp", "row_spacing_dp").forEach { p ->
+                            remove("${p}_${currentPosture.id}")
+                        }
+                    }
+                }
+            )
+        }
     }
     SettingsSection("Режим одной руки") {
         ChoiceItem(
@@ -743,6 +933,177 @@ internal fun KeysPage(settings: KeyboardSettings) {
         }
         ToggleItem(Icons.Rounded.Lightbulb, "Строка подсказок", "Если выключить, наверху всегда будут инструменты", settings.showSuggestions) {
             KeyboardPrefs.edit(context) { putBoolean("show_suggestions", it) }
+        }
+    }
+}
+
+@Composable
+internal fun FoldPage(settings: KeyboardSettings) {
+    val context = LocalContext.current
+    val configuration = LocalConfiguration.current
+    val activePosture = remember(configuration) { FoldPosture.detect(configuration) }
+    var targetPostureId by remember { mutableStateOf("CURRENT") }
+    val currentPosture = if (targetPostureId == "CURRENT") activePosture else FoldPosture.fromId(targetPostureId)
+    val postureSettings = remember(settings, currentPosture) { settings.forPosture(currentPosture) }
+
+    PreviewSection(postureSettings)
+
+    SettingsSection("Настройка профиля экрана") {
+        ChoiceItem(
+            icon = Icons.Rounded.Devices,
+            title = "Профиль экрана",
+            subtitle = tr("Параметры сплита для экрана «{0}»", tr(currentPosture.title)),
+            options = listOf(
+                "CURRENT" to tr("Текущий ({0})", tr(activePosture.title)),
+                "unfolded_landscape" to "Разложен горизонтально",
+                "unfolded_portrait" to "Разложен вертикально",
+                "folded_portrait" to "Сложен вертикально",
+                "folded_landscape" to "Сложен горизонтально"
+            ),
+            selected = targetPostureId
+        ) { id ->
+            targetPostureId = id
+        }
+    }
+
+    SettingsSection("Режим разделения (Split)") {
+        ChoiceItem(
+            icon = Icons.AutoMirrored.Rounded.CallSplit,
+            title = "Раздельная клавиатура",
+            subtitle = "Разбивает клавиатуру на два блока для набора двумя пальцами на широких экранах",
+            options = listOf(
+                "AUTO" to "Авто (экран ≥ 600dp)",
+                "ON" to "Включена всегда",
+                "OFF" to "Выключена"
+            ),
+            selected = settings.splitKeyboard
+        ) { v ->
+            KeyboardPrefs.edit(context) { putString("split_keyboard", v) }
+        }
+
+        ChoiceItem(
+            icon = Icons.Rounded.ViewColumn,
+            title = "Вариант разделения",
+            subtitle = "Выберите способ расположения центральных клавиш",
+            options = listOf(
+                "STANDARD" to "Стандартный сплит",
+                "DUPLICATE" to "С дублированием букв (Gboard)"
+            ),
+            selected = settings.splitMode
+        ) { v ->
+            KeyboardPrefs.edit(context) { putString("split_mode", v) }
+        }
+
+        ChoiceItem(
+            icon = Icons.Rounded.Polyline,
+            title = "Форма сплита",
+            subtitle = "Прямое деление или дугообразный сдвиг рядов под изгиб пальцев",
+            options = listOf(
+                "FLAT" to "Прямой",
+                "STAGGERED" to "Эргономичный (со сдвигом)"
+            ),
+            selected = settings.splitLayout
+        ) { v ->
+            KeyboardPrefs.edit(context) { putString("split_layout", v) }
+        }
+    }
+
+    SettingsSection("Геометрия и отступы (" + tr(currentPosture.title) + ")") {
+        SliderItem(
+            icon = Icons.Rounded.Straighten,
+            title = "Центральный отступ",
+            value = postureSettings.splitGapDp,
+            range = 16f..280f,
+            format = { "${it.roundToInt()} dp" },
+            onDrag = { v ->
+                KeyboardPrefs.edit(context) { putFloat("split_gap_dp_${currentPosture.id}", v) }
+            },
+            onCommit = { v ->
+                KeyboardPrefs.edit(context) { putFloat("split_gap_dp_${currentPosture.id}", v) }
+            }
+        )
+
+        ToggleItem(
+            icon = Icons.Rounded.SpaceBar,
+            title = "Раздельный пробел",
+            subtitle = "Вкл: 2 отдельные клавиши по обеим сторонам | Выкл: единый сплошной пробел по всей центральной линии",
+            checked = settings.splitSpacebar
+        ) { on ->
+            KeyboardPrefs.edit(context) { putBoolean("split_spacebar", on) }
+        }
+
+        ToggleItem(
+            icon = Icons.Rounded.Padding,
+            title = "Адаптивные боковые отступы",
+            subtitle = "Оставлять удобные поля по краям на широких экранах, как в Gboard",
+            checked = settings.adaptiveSidePadding
+        ) { on ->
+            KeyboardPrefs.edit(context) { putBoolean("adaptive_side_padding", on) }
+        }
+
+        val isOverrideSet = settings.postureOverrides.containsKey("split_gap_dp_${currentPosture.id}")
+        if (isOverrideSet) {
+            ActionItem(
+                icon = Icons.Rounded.RestartAlt,
+                title = "Вернуть авто-адаптацию",
+                subtitle = tr("Сбросить ручной отступ для «{0}»", tr(currentPosture.title)),
+                onClick = {
+                    KeyboardPrefs.edit(context) {
+                        remove("split_gap_dp_${currentPosture.id}")
+                    }
+                }
+            )
+        }
+    }
+
+    SettingsSection("Центральный блок между половинами") {
+        ChoiceItem(
+            icon = Icons.Rounded.Widgets,
+            title = "Виджет в центре сплита",
+            subtitle = "Что отображать в зазоре между левой и правой половинами",
+            options = listOf(
+                "NONE" to "Пустой отступ (Spacer)",
+                "CREASE_LINE" to "Индикатор сгиба экрана",
+                "NUMPAD" to "Цифровой блок (NumPad)",
+                "SYMBOLS" to "Частые символы",
+                "NAV" to "Стрелки навигации"
+            ),
+            selected = settings.centralGapSlot
+        ) { v ->
+            KeyboardPrefs.edit(context) { putString("central_gap_slot", v) }
+        }
+
+        AnimatedVisibility(visible = settings.centralGapSlot == "CREASE_LINE") {
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                ChoiceItem(
+                    icon = Icons.Rounded.LinearScale,
+                    title = "Стиль линии сгиба",
+                    subtitle = "Внешний вид визуального ориентира сгиба",
+                    options = listOf(
+                        "GLOW" to "Неоновое свечение",
+                        "LINE" to "Тонкая линия",
+                        "DOTS" to "Пунктир",
+                        "GRADIENT" to "Градиентный луч"
+                    ),
+                    selected = settings.creaseStyle
+                ) { v ->
+                    KeyboardPrefs.edit(context) { putString("crease_style", v) }
+                }
+
+                SliderItem(
+                    icon = Icons.Rounded.Opacity,
+                    title = "Прозрачность индикатора",
+                    value = settings.creaseOpacity,
+                    range = 0.1f..1.0f,
+                    format = { "${(it * 100).roundToInt()}%" },
+                    onDrag = { v ->
+                        KeyboardPrefs.edit(context) { putFloat("crease_opacity", v) }
+                    },
+                    onCommit = { v ->
+                        KeyboardPrefs.edit(context) { putFloat("crease_opacity", v) }
+                    }
+                )
+            }
         }
     }
 }
@@ -1016,29 +1377,50 @@ internal fun FeedbackPage(settings: KeyboardSettings) {
             Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 ChoiceItem(
                     Icons.Rounded.TouchApp, "Характер отклика", null,
-                    HapticMode.entries.map { it.id to it.title }, settings.hapticMode
+                    listOf(
+                        "CLICK" to "Клик",
+                        "TICK" to "Тик",
+                        "HEAVY" to "Сильный",
+                        "CUSTOM" to "Свой (настройка силы)"
+                    ), settings.hapticMode
                 ) { id ->
                     KeyboardPrefs.edit(context) { putString("haptic_mode", id) }
                     HapticsEngine.preview(context, HapticMode.fromId(id), settings.vibrationMs, settings.vibrationAmplitude)
                 }
-                AnimatedVisibility(visible = settings.hapticMode == HapticMode.CUSTOM.id) {
-                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                        SliderItem(
-                            icon = Icons.Rounded.Timer, title = "Длительность",
-                            value = settings.vibrationMs, range = 1f..80f,
-                            format = { "${it.roundToInt()} " + tr("мс") },
-                            onDrag = { v -> HapticsEngine.preview(context, HapticMode.CUSTOM, v, settings.vibrationAmplitude) },
-                            onCommit = { v -> KeyboardPrefs.edit(context) { putFloat("vibration_ms", v) } }
-                        )
-                        SliderItem(
-                            icon = Icons.Rounded.Bolt, title = "Сила",
-                            value = settings.vibrationAmplitude, range = 1f..255f,
-                            format = { "${(it / 2.55f).roundToInt()}%" },
-                            onDrag = { v -> HapticsEngine.preview(context, HapticMode.CUSTOM, settings.vibrationMs, v) },
-                            onCommit = { v -> KeyboardPrefs.edit(context) { putFloat("vibration_amplitude", v) } }
-                        )
+                SliderItem(
+                    icon = Icons.Rounded.Bolt, title = "Сила вибрации",
+                    value = settings.vibrationAmplitude, range = 1f..255f,
+                    format = { "${(it / 2.55f).roundToInt()}%" },
+                    onDrag = { v ->
+                        if (settings.hapticMode != HapticMode.CUSTOM.id) {
+                            KeyboardPrefs.edit(context) { putString("haptic_mode", HapticMode.CUSTOM.id) }
+                        }
+                        HapticsEngine.preview(context, HapticMode.CUSTOM, settings.vibrationMs, v)
+                    },
+                    onCommit = { v ->
+                        KeyboardPrefs.edit(context) {
+                            putString("haptic_mode", HapticMode.CUSTOM.id)
+                            putFloat("vibration_amplitude", v)
+                        }
                     }
-                }
+                )
+                SliderItem(
+                    icon = Icons.Rounded.Timer, title = "Длительность вибрации",
+                    value = settings.vibrationMs, range = 1f..80f,
+                    format = { "${it.roundToInt()} " + tr("мс") },
+                    onDrag = { v ->
+                        if (settings.hapticMode != HapticMode.CUSTOM.id) {
+                            KeyboardPrefs.edit(context) { putString("haptic_mode", HapticMode.CUSTOM.id) }
+                        }
+                        HapticsEngine.preview(context, HapticMode.CUSTOM, v, settings.vibrationAmplitude)
+                    },
+                    onCommit = { v ->
+                        KeyboardPrefs.edit(context) {
+                            putString("haptic_mode", HapticMode.CUSTOM.id)
+                            putFloat("vibration_ms", v)
+                        }
+                    }
+                )
                 ToggleItem(Icons.Rounded.Keyboard, "Сильнее на Shift, Enter, пробеле", null, settings.strongSpecialKeys) {
                     KeyboardPrefs.edit(context) { putBoolean("strong_special_keys", it) }
                 }
@@ -1370,6 +1752,30 @@ internal fun BackupPage() {
                 .onFailure { Toast.makeText(context, tr("Ошибка: {0}", it.message), Toast.LENGTH_LONG).show() }
         }
     }
+    val dictImportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
+        if (uri != null) scope.launch {
+            val r = withContext(Dispatchers.IO) {
+                WordPredictorEngine.importGboardDictionary(context, uri)
+            }
+            r.onSuccess { count ->
+                Toast.makeText(context, tr("Импортировано слов и сокращений: {0}", count), Toast.LENGTH_SHORT).show()
+            }.onFailure { e ->
+                Toast.makeText(context, tr("Ошибка импорта словаря: {0}", e.message), Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+    val dictExportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/tab-separated-values")) { uri: Uri? ->
+        if (uri != null) scope.launch {
+            val r = withContext(Dispatchers.IO) {
+                WordPredictorEngine.exportGboardDictionary(context, uri)
+            }
+            r.onSuccess { count ->
+                Toast.makeText(context, tr("Экспортировано слов: {0}", count), Toast.LENGTH_SHORT).show()
+            }.onFailure { e ->
+                Toast.makeText(context, tr("Ошибка экспорта словаря: {0}", e.message), Toast.LENGTH_LONG).show()
+            }
+        }
+    }
     SettingsSection("Настройки") {
         ActionItem(Icons.Rounded.Upload, "Экспорт настроек", "Сохранить все параметры в .json", onClick = {
             exportLauncher.launch("expressive-keyboard-settings.json")
@@ -1378,6 +1784,14 @@ internal fun BackupPage() {
             importLauncher.launch(arrayOf("application/json", "text/plain", "*/*"))
         })
         ActionItem(Icons.Rounded.RestartAlt, "Сбросить настройки", "Словарь, плагины и недавние эмодзи сохранятся", onClick = { confirm = "settings" })
+    }
+    SettingsSection("Словарь Gboard и обучение") {
+        ActionItem(Icons.Rounded.Download, "Импорт словаря Gboard", "Загрузить личный словарь (.txt / .tsv)", onClick = {
+            dictImportLauncher.launch(arrayOf("text/plain", "text/tab-separated-values", "text/csv", "*/*"))
+        })
+        ActionItem(Icons.Rounded.Upload, "Экспорт словаря Gboard", "Выгрузить свои слова и сокращения в .tsv", onClick = {
+            dictExportLauncher.launch("gboard-dictionary.tsv")
+        })
     }
     SettingsSection("Данные") {
         ActionItem(Icons.Rounded.AutoFixHigh, "Очистить выученные слова", "Подсказки забудут ваши слова и пары слов", onClick = { confirm = "dict" })
@@ -1429,8 +1843,8 @@ internal fun AboutPage() {
         Box(Modifier.size(96.dp).wavyBackground(spec, cs.primary), contentAlignment = Alignment.Center) {
             Icon(Icons.Rounded.Keyboard, null, tint = cs.onPrimary, modifier = Modifier.size(44.dp))
         }
-        Text("Expressive Keyboard", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.ExtraBold, color = cs.onPrimaryContainer)
-        Text(tr("Версия {0}", version) + " · Material 3 Expressive", style = MaterialTheme.typography.bodyMedium, color = cs.onPrimaryContainer.copy(alpha = 0.8f))
+        Text("Expressive Keyboard Duo", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.ExtraBold, color = cs.onPrimaryContainer)
+        Text(tr("Версия {0}", version) + " · Duo Edition (Material 3)", style = MaterialTheme.typography.bodyMedium, color = cs.onPrimaryContainer.copy(alpha = 0.8f))
     }
     SettingsSection("Возможности") {
         listOf(

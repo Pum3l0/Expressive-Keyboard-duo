@@ -785,6 +785,7 @@ object PluginRepository {
 
     /** Тема + настройки + оформление одной кнопкой. */
     fun applyLook(context: Context, p: KeyboardPlugin) {
+        if (!isEnabled(p.id)) setEnabled(context, p.id, true)
         p.theme?.let { applyTheme(context, it) }
         if (p.settings.isNotEmpty()) KeyboardPrefs.applyPluginSettings(context, p.settings)
         if (p.skin != null) KeyboardPrefs.edit(context) { putString("skin_plugin", p.id) }

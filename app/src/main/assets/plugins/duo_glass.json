@@ -1,0 +1,80 @@
+{
+  "id": "builtin.duo-glass",
+  "name": "Duo Expressive Glass",
+  "version": "1.0",
+  "author": "Expressive Keyboard Duo",
+  "description": "Эксклюзивное оформление для складных экранов: глубокий черновато-неоновый OLED-фон, стекло с преломлением и мягким светящимся акцентом в сплите.",
+  "icon": "✨",
+  "skin": {
+    "keyboard": {
+      "background": {
+        "colors": [
+          "#0A0A0F",
+          "#12121C"
+        ],
+        "angle": 90
+      },
+      "windowBlur": 32,
+      "blurTint": "#CC0A0A0F",
+      "trail": "#CC7C4DFF",
+      "corner": 28
+    },
+    "colors": {
+      "background": "#0A0A0F",
+      "key": "#1A1A24",
+      "keyText": "#F0F0FF",
+      "func": "#222230",
+      "funcText": "#F0F0FF",
+      "accent": "#7C4DFF",
+      "accentText": "#FFFFFF"
+    },
+    "keys": {
+      "*": {
+        "material": "glass",
+        "glass": {
+          "blur": 18,
+          "refraction": 0.6,
+          "dispersion": 0.12,
+          "highlight": 0.85,
+          "rim": 0.9,
+          "tint": "#337C4DFF"
+        },
+        "pressedBackground": "#7C4DFF",
+        "shadow": 6,
+        "shadowY": 3,
+        "shadowColor": "#667C4DFF",
+        "press": "jelly",
+        "radius": 16,
+        "pressedRadius": 24
+      },
+      "func": {
+        "material": "glass",
+        "glass": {
+          "blur": 18,
+          "refraction": 0.5,
+          "dispersion": 0.1,
+          "highlight": 0.7,
+          "rim": 0.8,
+          "tint": "#227C4DFF"
+        },
+        "pressedBackground": "#7C4DFF",
+        "shadow": 4,
+        "shadowY": 2,
+        "shadowColor": "#447C4DFF",
+        "press": "scale",
+        "radius": 16
+      },
+      "accent": {
+        "material": "solid",
+        "fill": "#7C4DFF",
+        "text": "#FFFFFF",
+        "pressedBackground": "#996BFF",
+        "shadow": 8,
+        "shadowY": 4,
+        "shadowColor": "#887C4DFF",
+        "press": "bounce",
+        "radius": 18
+      }
+    }
+  }
+}

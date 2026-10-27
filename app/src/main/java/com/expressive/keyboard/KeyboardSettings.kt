@@ -149,6 +149,30 @@ enum class HapticMode(val id: String, val title: String) {
     }
 }
 
+enum class FoldPosture(val id: String, val title: String) {
+    UNFOLDED_LANDSCAPE("unfolded_landscape", "Разложен горизонтально"),
+    UNFOLDED_PORTRAIT("unfolded_portrait", "Разложен вертикально"),
+    FOLDED_PORTRAIT("folded_portrait", "Сложен вертикально"),
+    FOLDED_LANDSCAPE("folded_landscape", "Сложен горизонтально");
+
+    companion object {
+        fun fromId(id: String): FoldPosture = entries.firstOrNull { it.id == id } ?: FOLDED_PORTRAIT
+
+        fun detect(configuration: android.content.res.Configuration): FoldPosture {
+            val isLandscape = configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
+            val w = configuration.screenWidthDp
+            val h = configuration.screenHeightDp
+            val isUnfolded = w >= 600 || (w >= 500 && h >= 500)
+            return when {
+                isUnfolded && isLandscape -> UNFOLDED_LANDSCAPE
+                isUnfolded -> UNFOLDED_PORTRAIT
+                isLandscape -> FOLDED_LANDSCAPE
+                else -> FOLDED_PORTRAIT
+            }
+        }
+    }
+}
+
 @Immutable
 data class KeyboardSettings(
     val themeMode: String = "SYSTEM",
@@ -265,6 +289,19 @@ data class KeyboardSettings(
     // --- интерфейс ---
     val appLanguage: String = "SYSTEM",           // SYSTEM | ru | en
     val designStyle: String = "EXPRESSIVE",
+    // --- складные экраны (Fold & Duo) ---
+    val splitKeyboard: String = "AUTO",           // AUTO | ON | OFF
+    val splitMode: String = "STANDARD",           // STANDARD | DUPLICATE
+    val splitLayout: String = "FLAT",             // FLAT | STAGGERED
+    val splitGapDp: Float = 60f,                  // 16f..280f
+    val splitSpacebar: Boolean = true,            // Разделять пробел на 2 клавиши
+    val adaptiveSidePadding: Boolean = true,      // Адаптивные отступы по бокам в стиле Gboard
+    val centralGapSlot: String = "NONE",          // NONE | CREASE_LINE | NUMPAD | SYMBOLS | NAV
+    val creaseStyle: String = "GLOW",             // GLOW | LINE | DOTS | GRADIENT
+    val creaseOpacity: Float = 0.6f,              // 0.1f..1.0f
+    val spaceLeftSwipeUp: String = "CLIPBOARD",   // CLIPBOARD | EMOJI | VOICE | EDIT_BAR | TRANSLATE | OFF
+    val spaceRightSwipeUp: String = "EMOJI",      // EMOJI | CLIPBOARD | VOICE | EDIT_BAR | TRANSLATE | OFF
+    val postureOverrides: Map<String, Float> = emptyMap(),
     /** Не хранится: клавиатура в альбомной ориентации — ниже клавиши и шапка. */
     val landscape: Boolean = false
 ) {
@@ -273,6 +310,52 @@ data class KeyboardSettings(
     val userLayoutMap: Map<String, List<String>> by lazy { UserLayouts.parse(userLayouts) }
 
     val hasBackgroundImage: Boolean get() = bgImageVersion != 0L
+
+    fun forPosture(posture: FoldPosture): KeyboardSettings {
+        fun getOverride(param: String, defaultVal: Float): Float {
+            val key = "${param}_${posture.id}"
+            return postureOverrides[key] ?: defaultVal
+        }
+
+        val adaptGap = when (posture) {
+            FoldPosture.UNFOLDED_LANDSCAPE -> 80f
+            FoldPosture.UNFOLDED_PORTRAIT -> 52f
+            FoldPosture.FOLDED_LANDSCAPE -> 0f
+            FoldPosture.FOLDED_PORTRAIT -> 0f
+        }
+        val adaptHeight = when (posture) {
+            FoldPosture.UNFOLDED_LANDSCAPE -> 46f
+            FoldPosture.UNFOLDED_PORTRAIT -> 52f
+            FoldPosture.FOLDED_LANDSCAPE -> 40f
+            FoldPosture.FOLDED_PORTRAIT -> keyHeightDp
+        }
+        val adaptSide = when (posture) {
+            FoldPosture.UNFOLDED_LANDSCAPE -> 16f
+            FoldPosture.UNFOLDED_PORTRAIT -> 12f
+            FoldPosture.FOLDED_LANDSCAPE -> 8f
+            FoldPosture.FOLDED_PORTRAIT -> sidePaddingDp
+        }
+        val adaptKeySpacing = when (posture) {
+            FoldPosture.UNFOLDED_LANDSCAPE -> 4f
+            FoldPosture.UNFOLDED_PORTRAIT -> 5f
+            FoldPosture.FOLDED_LANDSCAPE -> 3f
+            FoldPosture.FOLDED_PORTRAIT -> keySpacingDp
+        }
+        val adaptRowSpacing = when (posture) {
+            FoldPosture.UNFOLDED_LANDSCAPE -> 6f
+            FoldPosture.UNFOLDED_PORTRAIT -> 8f
+            FoldPosture.FOLDED_LANDSCAPE -> 5f
+            FoldPosture.FOLDED_PORTRAIT -> rowSpacingDp
+        }
+
+        return copy(
+            splitGapDp = getOverride("split_gap_dp", if (splitGapDp == 60f || splitGapDp == 0f) adaptGap else splitGapDp),
+            keyHeightDp = getOverride("key_height_dp", adaptHeight),
+            sidePaddingDp = getOverride("side_padding_dp", adaptSide),
+            keySpacingDp = getOverride("key_spacing_dp", adaptKeySpacing),
+            rowSpacingDp = getOverride("row_spacing_dp", adaptRowSpacing)
+        )
+    }
 
     /** В альбомной ориентации клавиатура занимает не больше ~55% высоты экрана. */
     fun forLandscape(screenHeightDp: Int): KeyboardSettings {
@@ -428,7 +511,26 @@ object KeyboardPrefs {
             emojiFontVersion = p.getLong("emoji_font_version", 0L),
             emojiStyle = p.getString("emoji_style", null) ?: if (p.getLong("emoji_font_version", 0L) != 0L) "CUSTOM" else "SYSTEM",
             appLanguage = p.getString("app_language", "SYSTEM") ?: "SYSTEM",
-            designStyle = p.getString("design_style", "EXPRESSIVE") ?: "EXPRESSIVE"
+            designStyle = p.getString("design_style", "EXPRESSIVE") ?: "EXPRESSIVE",
+            splitKeyboard = p.getString("split_keyboard", "AUTO") ?: "AUTO",
+            splitMode = p.getString("split_mode", "STANDARD") ?: "STANDARD",
+            splitLayout = p.getString("split_layout", "FLAT") ?: "FLAT",
+            splitGapDp = p.getFloat("split_gap_dp", 60f).coerceIn(16f, 280f),
+            splitSpacebar = p.getBoolean("split_spacebar", true),
+            adaptiveSidePadding = p.getBoolean("adaptive_side_padding", true),
+            centralGapSlot = p.getString("central_gap_slot", "NONE") ?: "NONE",
+            creaseStyle = p.getString("crease_style", "GLOW") ?: "GLOW",
+            creaseOpacity = p.getFloat("crease_opacity", 0.6f).coerceIn(0.1f, 1f),
+            spaceLeftSwipeUp = p.getString("space_left_swipe_up", "CLIPBOARD") ?: "CLIPBOARD",
+            spaceRightSwipeUp = p.getString("space_right_swipe_up", "EMOJI") ?: "EMOJI",
+            postureOverrides = buildMap {
+                for (posture in FoldPosture.entries) {
+                    listOf("split_gap_dp", "key_height_dp", "side_padding_dp", "key_spacing_dp", "row_spacing_dp").forEach { param ->
+                        val k = "${param}_${posture.id}"
+                        if (p.contains(k)) put(k, p.getFloat(k, 0f))
+                    }
+                }
+            }
         )
     }
 
@@ -452,7 +554,8 @@ object KeyboardPrefs {
         listOf(
             "key_height_dp", "corner_radius_dp", "key_spacing_dp", "row_spacing_dp", "bottom_offset_dp",
             "wave_amplitude_percent", "vibration_ms", "vibration_amplitude", "long_press_ms", "key_opacity", "bg_dim",
-            "bg_blur_dp", "window_blur_dp", "key_label_scale", "side_padding_dp", "one_handed_width", "press_animation", "sound_volume"
+            "bg_blur_dp", "window_blur_dp", "key_label_scale", "side_padding_dp", "one_handed_width", "press_animation", "sound_volume",
+            "split_gap_dp", "crease_opacity"
         ).forEach { put(it, 'f') }
         listOf(
             "wave_count", "seed_color", "color_background", "color_key", "color_key_text", "color_func",
@@ -464,12 +567,13 @@ object KeyboardPrefs {
             "show_hints", "show_suggestions", "show_mic_button", "show_emoji_key", "show_globe_key", "panel_animations",
             "backspace_swipe", "clipboard_history", "instant_input", "glide_typing", "glide_trail", "swipe_up_hint",
             "space_long_press", "auto_pair", "incognito", "dict_auto_download", "punctuation_keys", "smart_punctuation",
-            "system_spellcheck", "edit_bar"
+            "system_spellcheck", "edit_bar", "split_spacebar", "adaptive_side_padding"
         ).forEach { put(it, 'b') }
         listOf(
             "theme_mode", "accent_shape_preset", "haptic_mode", "font_style", "color_source", "one_handed", "space_swipe",
             "globe_long_press", "window_blur", "ai_provider", "space_long_action", "languages", "auto_correct_strength", "translate_target", "toolbar_order", "toolbar_hidden", "user_layouts",
-            "space_left_key", "space_right_key", "emoji_style", "app_language", "design_style"
+            "space_left_key", "space_right_key", "emoji_style", "app_language", "design_style",
+            "split_keyboard", "split_mode", "split_layout", "central_gap_slot", "crease_style", "space_left_swipe_up", "space_right_swipe_up"
         ).forEach { put(it, 's') }
     }
 

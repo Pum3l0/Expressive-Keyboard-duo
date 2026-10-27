@@ -1,60 +1,64 @@
-# Expressive Keyboard
+# Expressive Keyboard Duo 📱✨
 
-An Android keyboard in the Material 3 Expressive style, built with Kotlin and Jetpack Compose.
-Highly customizable and extensible with plugins and JavaScript mods.
+An advanced Android keyboard in the Material 3 Expressive style, specialized for **foldable devices (Google Pixel Fold)**, tablets, and wide screens, built with Kotlin and Jetpack Compose.
 
-<!-- Add 2–3 screenshots here, for example:
-<p>
-  <img src="screenshots/keyboard.png" width="250">
-  <img src="screenshots/settings.png" width="250">
+<!-- Expressive Keyboard Duo Banner / Screenshots -->
+<p align="center">
+  <img src="docs/banner.png" alt="Expressive Keyboard Duo" width="600">
 </p>
--->
 
-## Download
+> [!NOTE]
+> **Foldable Optimization**: Tested and verified on **Google Pixel Fold** (Android 14 / 15 / 16).
+> Features a two-pane split settings layout, adaptive posture profiles, and ergonomic split key layouts.
 
-Get the latest APK from [Releases](https://github.com/kotlalipopus/Expressive-Keyboard/releases/latest).
+---
 
-Requires Android 8.0 or newer.
+## 🚀 Key Duo Features (Foldable & Large Screens)
 
-## Features
+- 📱 **Adaptive Posture Profiles (`FoldPosture`)**: Automatically calculates and applies optimal key heights, side padding, and gap spacing for 4 distinct device states:
+  - *Unfolded Landscape* (Inner wide screen)
+  - *Unfolded Portrait* (Inner tall screen)
+  - *Folded Portrait* (Outer screen)
+  - *Folded Landscape* (Outer screen)
+- 🔀 **Split Keyboard Modes**:
+  - **Standard Split**: Cleanly divides key clusters with customizable central gap (`16dp..280dp`).
+  - **Duplicate Center Keys (Gboard-style)**: Duplicates central letters (`г`/`н`, `р`/`о`, `и`/`т` in ЙЦУКЕН) so both thumbs easily reach them.
+- 📐 **Ergonomic Staggered Layout**: Curved row offsets following the natural arc of human thumbs.
+- 🦿 **Fold Crease Guide & Central Gap Widgets**:
+  - *Crease Guide*: Customizable visual fold line with **Glow**, **Line**, **Dots**, or **Gradient** styles and opacity controls.
+  - *NumPad*: Compact central numeric keypad (`1 2 3`, `4 5 6`, `7 8 9`, `0`).
+  - *Symbols & Navigation*: Quick symbol grid or cursor arrow pads directly in the central gap.
+- ⌨️ **Full-Width or Split Spacebar Concepts**: Option between dual split spacebars or a single continuous full-width spacebar across the central bottom row.
+- 🎯 **Expanded Touch Targets (Zero Dead Touch Gaps)**: 100% active touch surface across grid cells so large thumbs never miss key taps.
+- 📚 **Gboard Personal Dictionary Import & Export**: Import and export `.txt` / `.tsv` dictionary files compatible with Gboard.
+- 🖼️ **Adaptive Two-Pane Settings Screen**: Master-detail sidebar layout on unfolded inner screens (`screenWidthDp >= 600`).
 
-- **Typing:** word suggestions, autocorrect, glide (swipe) typing
-- **Languages:** 90+ layouts; Chinese (Pinyin, simplified and traditional) and Japanese (Romaji → Kana) input; Indic scripts (InScript)
-- **Emoji:** all Unicode 16 emoji, search in English and Russian, skin tones, built-in styles (Twemoji, Noto, Blob, OpenMoji)
-- **Designs:** Material You Expressive, Material 3 (Google guidelines), Liquid Glass, Classic, Neon, Neumorphism — one tap
-- **App language:** Russian or English
-- **Panels:** emoji, GIFs, clipboard, translator, voice input
-- **Look:** Material You colors, themes and skins, custom fonts (.ttf/.otf), a photo from your gallery behind the keys
-- **Layout:** key height and corner radius, spacing, keyboard width, one-handed mode
-- **Feedback:** adjustable vibration and sound
-- **Privacy:** incognito mode; suggestions and dictionary learning are turned off in password fields
-- **Plugins and mods:** custom buttons, shortcuts, layouts, themes and JavaScript scripts that can draw and animate over the keyboard, press keys and change layouts on the fly
+---
 
-## Installation
+## 🌟 Core Keyboard Features
 
-1. Download and install the APK from [Releases](https://github.com/kotlalipopus/Expressive-Keyboard/releases/latest).
-2. Open the app and enable the keyboard in system settings.
-3. Select Expressive Keyboard as your input method.
+- **Typing**: Next-word prediction, auto-correction, glide (swipe) typing, local self-learning dictionary.
+- **Languages**: 90+ layouts including Russian, English, Chinese (Pinyin), Japanese (Romaji → Kana), Indic scripts, and Telex.
+- **Emoji**: Unicode 16 emoji, dual English/Russian search, skin tones, built-in styles (Twemoji, Noto, Blob, OpenMoji).
+- **Designs**: Material You Expressive, Material 3, Liquid Glass, Classic, Neon, Neumorphism — one tap preset switching.
+- **Panels**: Emoji, GIFs, clipboard manager, translator, voice input.
+- **Customization**: Material You colors, custom fonts (`.ttf` / `.otf`), background images, adjustable vibration amplitude & duration.
+- **Plugins & Mods**: Extensible JavaScript plugin system for custom buttons, shortcuts, layouts, and floating widgets.
 
-## Permissions
+---
 
-| Permission | Why |
-|---|---|
-| Internet | GIFs (Giphy), translator, downloading suggestion dictionaries, mods with the `network` permission |
-| Microphone | Voice input |
-| Vibration | Haptic feedback on key press |
+## 📥 Installation
 
-Your typed text is not sent anywhere unless you use the translator yourself or install a mod
-that has both network and text-reading permissions.
+1. Download the latest APK from [Releases](https://github.com/kotlalipopus/Expressive-Keyboard/releases/latest).
+2. Install the APK on your Android device (Android 8.0+).
+3. Open **Expressive Keyboard Duo** and enable it in System Settings.
+4. Select Expressive Keyboard Duo as your active input method.
 
-## Plugins and mods
+---
 
-Plugins are imported in **Settings → Plugins and mods**. The format and JavaScript API are described
-in [PLUGINS.md](PLUGINS.md) (in Russian); examples live in [`app/src/main/assets/plugins`](app/src/main/assets/plugins).
+## 🛠️ Building from Source
 
-## Building from source
-
-You need Android Studio (or JDK 17 and Android SDK 35).
+Requirements: Android Studio (or JDK 17 and Android SDK 35).
 
 ```bash
 git clone https://github.com/kotlalipopus/Expressive-Keyboard.git
@@ -62,11 +66,10 @@ cd Expressive-Keyboard
 ./gradlew assembleDebug
 ```
 
-The APK will be in `app/build/outputs/apk/debug/`.
+The APK will be generated at `app/build/outputs/apk/debug/app-debug.apk`.
 
-To enable GIF search, put your own Giphy key into `GIPHY_API_KEY` in
-`app/src/main/java/com/expressive/keyboard/Common.kt`. Without a key, a built-in GIF set is used.
+---
 
-## License
+## 📜 License
 
-[MIT](LICENSE)# Expressive-Keyboard
+Distributed under the [MIT License](LICENSE).
