@@ -538,6 +538,9 @@ internal fun KeyView(
                     val id = down.id
                     val k = cKey
                     val act = cActions
+                    val fx = (down.position.x / size.width - 0.5f).coerceIn(-0.5f, 0.5f)
+                    val fy = (down.position.y / size.height - 0.5f).coerceIn(-0.5f, 0.5f)
+                    act.keyTouch(fx, fy)
                     pressed = true
                     if (cSettings.pressAnimation <= 0f) scope.launch { anim.snapTo(1f) }
                     else scope.launch { anim.animateTo(1f, spring(dampingRatio = 0.85f, stiffness = 1800f)) }
@@ -583,6 +586,7 @@ internal fun KeyView(
                                 var swiped = false
                                 var picker = false
                                 var lastX = down.position.x
+                                var lastY = down.position.y
                                 // удержание пробела без движения — выбор клавиатуры
                                 val lpAt = if (cSettings.spaceLongAction != "OFF") SystemClock.uptimeMillis() + 550L else Long.MAX_VALUE
                                 while (true) {
@@ -624,11 +628,13 @@ internal fun KeyView(
                                             act.swipeSpace(if (dx > 0) 1 else -1)
                                         }
                                         "CURSOR" -> {
-                                            if (!swiped && abs(dx) > slop) {
+                                            if (!swiped && (abs(dx) > slop || abs(dy) > slop)) {
                                                 swiped = true
                                                 lastX = ch.position.x
+                                                lastY = ch.position.y
                                             }
                                             if (swiped) {
+                                                val vertStep = 22.dp.toPx()
                                                 while (ch.position.x - lastX > cursorStep) {
                                                     lastX += cursorStep
                                                     act.swipeSpace(1)
@@ -636,6 +642,14 @@ internal fun KeyView(
                                                 while (lastX - ch.position.x > cursorStep) {
                                                     lastX -= cursorStep
                                                     act.swipeSpace(-1)
+                                                }
+                                                while (ch.position.y - lastY > vertStep) {
+                                                    lastY += vertStep
+                                                    act.moveCursorVertical(1)
+                                                }
+                                                while (lastY - ch.position.y > vertStep) {
+                                                    lastY -= vertStep
+                                                    act.moveCursorVertical(-1)
                                                 }
                                             }
                                         }
@@ -1966,11 +1980,21 @@ internal fun CentralGapWidget(
     palette: KeyPalette,
     actions: KeyboardActions,
     font: FontFamily,
+    settings: KeyboardSettings,
+    state: KeyboardState,
     modifier: Modifier = Modifier
 ) {
     if (splitGapDp < 36f || slot == "NONE") {
         Spacer(modifier.width(splitGapDp.dp))
         return
+    }
+
+    val pulseAnim = remember { Animatable(0f) }
+    LaunchedEffect(state.creasePulseSignal) {
+        if (state.creasePulseSignal > 0) {
+            pulseAnim.snapTo(1f)
+            pulseAnim.animateTo(0f, spring(stiffness = 300f))
+        }
     }
 
     Box(
@@ -1979,19 +2003,21 @@ internal fun CentralGapWidget(
     ) {
         when (slot) {
             "CREASE_LINE" -> {
+                val pulseWidth = (6f + pulseAnim.value * 6f).dp
+                val pulseAlpha = (opacity * (0.85f + pulseAnim.value * 0.15f)).coerceAtMost(1f)
                 when (style) {
                     "GLOW" -> {
                         Box(
-                            Modifier.width(6.dp).fillMaxHeight(0.85f)
+                            Modifier.width(pulseWidth).fillMaxHeight(0.85f)
                                 .clip(CircleShape)
-                                .background(palette.accent.copy(alpha = opacity * 0.85f))
+                                .background(palette.accent.copy(alpha = pulseAlpha))
                         )
                     }
                     "LINE" -> {
                         Box(
-                            Modifier.width(2.dp).fillMaxHeight(0.9f)
+                            Modifier.width((2f + pulseAnim.value * 3f).dp).fillMaxHeight(0.9f)
                                 .clip(CircleShape)
-                                .background(palette.outline.copy(alpha = opacity * 0.9f))
+                                .background(palette.outline.copy(alpha = pulseAlpha))
                         )
                     }
                     "DOTS" -> {
@@ -2002,21 +2028,21 @@ internal fun CentralGapWidget(
                         ) {
                             repeat(7) {
                                 Box(
-                                    Modifier.size(4.dp).clip(CircleShape)
-                                        .background(palette.accent.copy(alpha = opacity))
+                                    Modifier.size((4f + pulseAnim.value * 3f).dp).clip(CircleShape)
+                                        .background(palette.accent.copy(alpha = pulseAlpha))
                                 )
                             }
                         }
                     }
                     "GRADIENT" -> {
                         Box(
-                            Modifier.width(4.dp).fillMaxHeight(0.9f)
+                            Modifier.width(pulseWidth).fillMaxHeight(0.9f)
                                 .clip(CircleShape)
                                 .background(
                                     Brush.verticalGradient(
                                         listOf(
                                             palette.accent.copy(alpha = 0.1f),
-                                            palette.accent.copy(alpha = opacity),
+                                            palette.accent.copy(alpha = pulseAlpha),
                                             palette.accent.copy(alpha = 0.1f)
                                         )
                                     )
@@ -2099,6 +2125,40 @@ internal fun CentralGapWidget(
                             Icon(Icons.AutoMirrored.Rounded.KeyboardArrowRight, "→", tint = palette.onFunc, modifier = Modifier.size(16.dp))
                         }
                     }
+                }
+            }
+            "CUSTOM_IMAGE" -> {
+                val context = LocalContext.current
+                val imageFile = remember(settings.centralGapImageVersion) {
+                    File(context.filesDir, KeyboardPrefs.GAP_IMAGE_FILENAME).takeIf { it.exists() }
+                }
+                if (imageFile != null) {
+                    AsyncImage(
+                        model = imageFile,
+                        contentDescription = null,
+                        contentScale = ContentScale.Fit,
+                        modifier = Modifier
+                            .width(splitGapDp.dp)
+                            .fillMaxHeight(0.92f)
+                            .clip(RoundedCornerShape(12.dp))
+                    )
+                } else {
+                    Spacer(Modifier.width(splitGapDp.dp))
+                }
+            }
+            "PLUGINS" -> {
+                Box(Modifier.width(splitGapDp.dp).fillMaxHeight().padding(4.dp)) {
+                    PluginsPanel(KeyboardState(), actions, palette, font)
+                }
+            }
+            "GIF" -> {
+                Box(Modifier.width(splitGapDp.dp).fillMaxHeight().padding(4.dp)) {
+                    GifPanel(KeyboardState(), actions, settings, palette, font)
+                }
+            }
+            "CLIPBOARD" -> {
+                Box(Modifier.width(splitGapDp.dp).fillMaxHeight().padding(4.dp)) {
+                    ClipboardPanel(KeyboardState(), actions, palette, font)
                 }
             }
             else -> Spacer(Modifier.width(splitGapDp.dp))
@@ -2395,7 +2455,9 @@ internal fun KeyGrid(
                     splitGapDp = settings.splitGapDp,
                     palette = palette,
                     actions = actions,
-                    font = font
+                    font = font,
+                    settings = settings,
+                    state = state
                 )
             }
         }

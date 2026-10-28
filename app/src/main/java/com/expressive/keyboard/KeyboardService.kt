@@ -176,6 +176,7 @@ class KeyboardState {
     var pluginStatus by mutableStateOf("")
     /** Печать свайпом разрешена в этом поле (не пароль, не почта/адрес). */
     var glideAllowed by mutableStateOf(true)
+    var creasePulseSignal by mutableIntStateOf(0)
     val clipboard = mutableStateListOf<String>()
     /** Только что скопированное: предлагается вставить одним нажатием над клавиатурой. */
     var clipOffer by mutableStateOf<String?>(null)
@@ -192,6 +193,8 @@ interface KeyboardActions {
     /** Где именно нажата следующая клавиша: смещение от её центра в долях ширины и высоты (-0.5…0.5). */
     fun keyTouch(fx: Float, fy: Float) {}
     fun swipeSpace(direction: Int)
+    fun moveCursorVertical(direction: Int) {}
+    fun triggerCreasePulse() {}
     fun pickSuggestion(chip: SuggestionChipModel)
     fun commitText(text: String)
     fun commitEmoji(emoji: String)
@@ -1504,6 +1507,28 @@ class ComposeKeyboardService : InputMethodService(),
         return true
     }
 
+    private val CONJUNCTIONS = setOf(
+        "что", "чтобы", "потому", "если", "но", "а", "как", "где", "когда", "зачем", "почему", "хотя", "также",
+        "because", "which", "although", "however", "but"
+    )
+
+    private fun checkSmartConjunctionComma(ic: InputConnection) {
+        if (!settings.smartPunctuation) return
+        val textBefore = ic.getTextBeforeCursor(40, 0)?.toString() ?: return
+        val words = textBefore.trimEnd().split(Regex("\\s+"))
+        val lastWord = words.lastOrNull()?.lowercase() ?: return
+        if (lastWord in CONJUNCTIONS) {
+            val prefix = textBefore.trimEnd().substringBeforeLast(lastWord, "")
+            val prevChar = prefix.trimEnd().lastOrNull()
+            if (prevChar != null && prevChar.isLetterOrDigit() && prevChar != ',' && prevChar != '.' && prevChar != '!' && prevChar != '?') {
+                ic.beginBatchEdit()
+                ic.deleteSurroundingText(lastWord.length, 0)
+                ic.commitText(", $lastWord", 1)
+                ic.endBatchEdit()
+            }
+        }
+    }
+
     private fun typeSpace() {
         val ic = currentInputConnection ?: return
         glideWord = false
@@ -1538,6 +1563,7 @@ class ComposeKeyboardService : InputMethodService(),
         } else if (autoSpace) {
             autoSpace = false // пробел после подсказки уже стоит
         } else {
+            checkSmartConjunctionComma(ic)
             icCommit(ic, " ")
             undo = null
         }
@@ -1731,7 +1757,14 @@ class ComposeKeyboardService : InputMethodService(),
 
     // ------------------------------------------------------------------ KeyboardActions
 
+    override fun triggerCreasePulse() {
+        if (settings.creaseWaveEnabled) {
+            kb.creasePulseSignal++
+        }
+    }
+
     override fun keyDown(key: KeyModel) {
+        triggerCreasePulse()
         val special = key.type == KeyType.SPACE || key.type == KeyType.ENTER ||
             key.type == KeyType.BACKSPACE || key.type == KeyType.SHIFT
         HapticsEngine.keyPress(this, inputView, settings, special)
@@ -1815,6 +1848,26 @@ class ComposeKeyboardService : InputMethodService(),
         if (settings.spaceSwipe == "CURSOR" && panelInput == null) moveCursor(direction) else toggleLanguage(direction)
     }
 
+    override fun moveCursorVertical(direction: Int) {
+        val ic = currentInputConnection ?: return
+        finishComposing(ic)
+        undo = null
+        autoSpace = false
+        lastActionWasSpace = false
+        lastCommittedWord = ""
+        expectUnknown()
+        val code = if (direction > 0) KeyEvent.KEYCODE_DPAD_DOWN else KeyEvent.KEYCODE_DPAD_UP
+        if (kb.shift != ShiftState.OFF) {
+            val now = SystemClock.uptimeMillis()
+            ic.sendKeyEvent(KeyEvent(now, now, KeyEvent.ACTION_DOWN, code, 0, KeyEvent.META_SHIFT_ON or KeyEvent.META_SHIFT_LEFT_ON))
+            ic.sendKeyEvent(KeyEvent(now, now, KeyEvent.ACTION_UP, code, 0, KeyEvent.META_SHIFT_ON or KeyEvent.META_SHIFT_LEFT_ON))
+        } else {
+            sendDownUpKeyEvents(code)
+        }
+        HapticsEngine.tick(this, inputView, settings)
+        schedulePredictions()
+    }
+
     private fun finishComposing(ic: InputConnection) {
         if (composing.isEmpty()) return
         learn(lastCommittedWord, composing)
@@ -1831,7 +1884,14 @@ class ComposeKeyboardService : InputMethodService(),
         lastActionWasSpace = false
         lastCommittedWord = ""
         expectUnknown()
-        sendDownUpKeyEvents(if (direction > 0) KeyEvent.KEYCODE_DPAD_RIGHT else KeyEvent.KEYCODE_DPAD_LEFT)
+        val code = if (direction > 0) KeyEvent.KEYCODE_DPAD_RIGHT else KeyEvent.KEYCODE_DPAD_LEFT
+        if (kb.shift != ShiftState.OFF) {
+            val now = SystemClock.uptimeMillis()
+            ic.sendKeyEvent(KeyEvent(now, now, KeyEvent.ACTION_DOWN, code, 0, KeyEvent.META_SHIFT_ON or KeyEvent.META_SHIFT_LEFT_ON))
+            ic.sendKeyEvent(KeyEvent(now, now, KeyEvent.ACTION_UP, code, 0, KeyEvent.META_SHIFT_ON or KeyEvent.META_SHIFT_LEFT_ON))
+        } else {
+            sendDownUpKeyEvents(code)
+        }
         HapticsEngine.tick(this, inputView, settings)
         schedulePredictions()
     }

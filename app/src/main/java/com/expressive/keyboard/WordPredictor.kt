@@ -1161,17 +1161,25 @@ object WordPredictorEngine {
         if (lang.id == "ru") ruTypos[lower]?.let { return it }
         if (lang.id == "en") enTypos[lower]?.let { return it }
         if (lower.length < 3 || !lang.autoCorrect || !hasDictionary(lang)) return null
-        val normal = strength == "NORMAL"
+        val aggressive = strength == "AGGRESSIVE"
+        val normal = strength == "NORMAL" || aggressive
         val hasTouch = touches?.any { it != null } == true
         val len = lower.length
         // короткие слова часто сленг и сокращения («спс», «оч»): без данных о касаниях осторожный режим их не трогает
         val maxCost = when {
+            aggressive -> when {
+                len <= 3 -> 0.95f
+                len <= 5 -> 1.85f
+                len <= 7 -> 2.65f
+                else -> 3.35f
+            }
             len == 3 -> if (normal) 0.5f else if (hasTouch) 0.4f else return null
             len == 4 -> if (normal) 0.85f else 0.65f
             len <= 7 -> if (normal) 1.35f else 1.05f
             else -> if (normal) 1.9f else 1.5f
         }
         val maxRank = when {
+            aggressive -> 100_000
             len == 3 -> if (normal) 8_000 else 3_000
             len == 4 -> if (normal) 25_000 else 10_000
             else -> if (normal) 40_000 else 25_000

@@ -296,9 +296,11 @@ data class KeyboardSettings(
     val splitGapDp: Float = 60f,                  // 16f..280f
     val splitSpacebar: Boolean = true,            // Разделять пробел на 2 клавиши
     val adaptiveSidePadding: Boolean = true,      // Адаптивные отступы по бокам в стиле Gboard
-    val centralGapSlot: String = "NONE",          // NONE | CREASE_LINE | NUMPAD | SYMBOLS | NAV
+    val centralGapSlot: String = "NONE",          // NONE | CREASE_LINE | CUSTOM_IMAGE | NUMPAD | SYMBOLS | NAV
     val creaseStyle: String = "GLOW",             // GLOW | LINE | DOTS | GRADIENT
     val creaseOpacity: Float = 0.6f,              // 0.1f..1.0f
+    val centralGapImageVersion: Long = 0L,        // Версия файла своей картинки в сплите
+    val creaseWaveEnabled: Boolean = true,        // Волна-отклик сгиба при наборе
     val spaceLeftSwipeUp: String = "CLIPBOARD",   // CLIPBOARD | EMOJI | VOICE | EDIT_BAR | TRANSLATE | OFF
     val spaceRightSwipeUp: String = "EMOJI",      // EMOJI | CLIPBOARD | VOICE | EDIT_BAR | TRANSLATE | OFF
     val postureOverrides: Map<String, Float> = emptyMap(),
@@ -521,6 +523,8 @@ object KeyboardPrefs {
             centralGapSlot = p.getString("central_gap_slot", "NONE") ?: "NONE",
             creaseStyle = p.getString("crease_style", "GLOW") ?: "GLOW",
             creaseOpacity = p.getFloat("crease_opacity", 0.6f).coerceIn(0.1f, 1f),
+            centralGapImageVersion = p.getLong("central_gap_image_version", 0L),
+            creaseWaveEnabled = p.getBoolean("crease_wave_enabled", true),
             spaceLeftSwipeUp = p.getString("space_left_swipe_up", "CLIPBOARD") ?: "CLIPBOARD",
             spaceRightSwipeUp = p.getString("space_right_swipe_up", "EMOJI") ?: "EMOJI",
             postureOverrides = buildMap {
@@ -535,6 +539,20 @@ object KeyboardPrefs {
     }
 
     const val EMOJI_FONT_FILENAME = "emoji_font.ttf"
+    const val GAP_IMAGE_FILENAME = "central_gap_image.jpg"
+
+    fun setCentralGapImage(context: Context) = edit(context) {
+        putLong("central_gap_image_version", System.currentTimeMillis())
+        putString("central_gap_slot", "CUSTOM_IMAGE")
+    }
+
+    fun clearCentralGapImage(context: Context) {
+        File(context.filesDir, GAP_IMAGE_FILENAME).delete()
+        edit(context) {
+            putLong("central_gap_image_version", 0L)
+            putString("central_gap_slot", "NONE")
+        }
+    }
 
     fun setEmojiFont(context: Context) = edit(context) {
         putLong("emoji_font_version", System.currentTimeMillis())
@@ -567,7 +585,7 @@ object KeyboardPrefs {
             "show_hints", "show_suggestions", "show_mic_button", "show_emoji_key", "show_globe_key", "panel_animations",
             "backspace_swipe", "clipboard_history", "instant_input", "glide_typing", "glide_trail", "swipe_up_hint",
             "space_long_press", "auto_pair", "incognito", "dict_auto_download", "punctuation_keys", "smart_punctuation",
-            "system_spellcheck", "edit_bar", "split_spacebar", "adaptive_side_padding"
+            "system_spellcheck", "edit_bar", "split_spacebar", "adaptive_side_padding", "crease_wave_enabled"
         ).forEach { put(it, 'b') }
         listOf(
             "theme_mode", "accent_shape_preset", "haptic_mode", "font_style", "color_source", "one_handed", "space_swipe",

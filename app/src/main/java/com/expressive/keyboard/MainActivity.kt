@@ -940,11 +940,32 @@ internal fun KeysPage(settings: KeyboardSettings) {
 @Composable
 internal fun FoldPage(settings: KeyboardSettings) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     val configuration = LocalConfiguration.current
     val activePosture = remember(configuration) { FoldPosture.detect(configuration) }
     var targetPostureId by remember { mutableStateOf("CURRENT") }
     val currentPosture = if (targetPostureId == "CURRENT") activePosture else FoldPosture.fromId(targetPostureId)
     val postureSettings = remember(settings, currentPosture) { settings.forPosture(currentPosture) }
+
+    val gapImageLauncher = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
+        if (uri != null) scope.launch {
+            val ok = withContext(Dispatchers.IO) {
+                runCatching {
+                    val out = File(context.filesDir, KeyboardPrefs.GAP_IMAGE_FILENAME)
+                    context.contentResolver.openInputStream(uri)?.use { input ->
+                        out.outputStream().use { input.copyTo(it) }
+                    }
+                    true
+                }.getOrDefault(false)
+            }
+            if (ok) {
+                KeyboardPrefs.setCentralGapImage(context)
+                Toast.makeText(context, tr("Картинка сплита загружена"), Toast.LENGTH_SHORT).show()
+            } else {
+                Toast.makeText(context, tr("Не удалось открыть картинку"), Toast.LENGTH_LONG).show()
+            }
+        }
+    }
 
     PreviewSection(postureSettings)
 
@@ -1064,6 +1085,9 @@ internal fun FoldPage(settings: KeyboardSettings) {
             options = listOf(
                 "NONE" to "Пустой отступ (Spacer)",
                 "CREASE_LINE" to "Индикатор сгиба экрана",
+                "CUSTOM_IMAGE" to "Своя картинка / GIF / SVG",
+                "PLUGINS" to "Панель плагинов и модов",
+                "CLIPBOARD" to "Буфер обмена",
                 "NUMPAD" to "Цифровой блок (NumPad)",
                 "SYMBOLS" to "Частые символы",
                 "NAV" to "Стрелки навигации"
@@ -1071,6 +1095,28 @@ internal fun FoldPage(settings: KeyboardSettings) {
             selected = settings.centralGapSlot
         ) { v ->
             KeyboardPrefs.edit(context) { putString("central_gap_slot", v) }
+        }
+
+        AnimatedVisibility(visible = settings.centralGapSlot == "CUSTOM_IMAGE") {
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                ActionItem(
+                    icon = Icons.Rounded.Image,
+                    title = "Выбрать картинку или GIF",
+                    subtitle = "Файл .png, .jpg, .gif или .svg с галереи",
+                    onClick = { gapImageLauncher.launch("image/*") }
+                )
+                if (settings.centralGapImageVersion != 0L) {
+                    ActionItem(
+                        icon = Icons.Rounded.DeleteOutline,
+                        title = "Убрать картинку",
+                        subtitle = null,
+                        onClick = {
+                            KeyboardPrefs.clearCentralGapImage(context)
+                            Toast.makeText(context, tr("Картинка удалена"), Toast.LENGTH_SHORT).show()
+                        }
+                    )
+                }
+            }
         }
 
         AnimatedVisibility(visible = settings.centralGapSlot == "CREASE_LINE") {
@@ -1104,6 +1150,15 @@ internal fun FoldPage(settings: KeyboardSettings) {
                     }
                 )
             }
+        }
+
+        ToggleItem(
+            icon = Icons.Rounded.AutoAwesome,
+            title = "Волна-отклик сгиба при наборе",
+            subtitle = "Легкий неоновый импульс вдоль сгиба экрана при кликах по буквам",
+            checked = settings.creaseWaveEnabled
+        ) { on ->
+            KeyboardPrefs.edit(context) { putBoolean("crease_wave_enabled", on) }
         }
     }
 }
@@ -1255,9 +1310,12 @@ internal fun TypingPage(settings: KeyboardSettings, part: SettingsPage) {
         AnimatedVisibility(settings.autoCorrect) {
             ChoiceItem(
                 Icons.Rounded.Tune, "Насколько смело исправлять",
-                if (settings.autoCorrectStrength == "NORMAL") "Исправляет и неоднозначные опечатки — как Gboard"
-                else "Только явные опечатки: соседняя клавиша, пропущенная или лишняя буква",
-                listOf("SAFE" to "Осторожно", "NORMAL" to "Активно"), settings.autoCorrectStrength
+                when (settings.autoCorrectStrength) {
+                    "AGGRESSIVE" -> "Исправляет даже сложные искажения с 2-3 замененными или пропущенными буквами"
+                    "NORMAL" -> "Исправляет и неоднозначные опечатки — как Gboard"
+                    else -> "Только явные опечатки: соседняя клавиша, пропущенная или лишняя буква"
+                },
+                listOf("SAFE" to "Осторожно", "NORMAL" to "Активно", "AGGRESSIVE" to "Агрессивно"), settings.autoCorrectStrength
             ) { v -> KeyboardPrefs.edit(context) { putString("auto_correct_strength", v) } }
         }
         val spellName = remember { SystemSpell.currentName(context) }
