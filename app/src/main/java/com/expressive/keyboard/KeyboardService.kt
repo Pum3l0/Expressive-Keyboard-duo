@@ -1149,10 +1149,28 @@ class ComposeKeyboardService : InputMethodService(),
         }
     }
 
+    /** Поле в нашем же приложении: обработка сдвигов курсора отложена до конца текущей правки. */
+    private val selectionHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private var deferredSelection = false
+
     override fun onUpdateSelection(
         oldSelStart: Int, oldSelEnd: Int, newSelStart: Int, newSelEnd: Int,
         candidatesStart: Int, candidatesEnd: Int
     ) {
+        // поле в этом же приложении (проверка клавиатуры в настройках): система зовёт onUpdateSelection прямо изнутри
+        // setComposingText — раньше, чем клавиатура запомнила, что набрала. Сдвиг курсора выглядел чужим, слово
+        // «отпускалось», и следующая буква вставляла его заново: «ПрПривПривет». Разбираем такие сдвиги после правки
+        if (!deferredSelection && currentInputEditorInfo?.packageName == packageName) {
+            selectionHandler.post {
+                deferredSelection = true
+                try {
+                    onUpdateSelection(oldSelStart, oldSelEnd, newSelStart, newSelEnd, candidatesStart, candidatesEnd)
+                } finally {
+                    deferredSelection = false
+                }
+            }
+            return
+        }
         super.onUpdateSelection(oldSelStart, oldSelEnd, newSelStart, newSelEnd, candidatesStart, candidatesEnd)
         if (ScriptHost.has("selection")) ScriptHost.emit("selection", mapOf("start" to newSelStart, "end" to newSelEnd))
         // в поле появился текст — панель функций уступает подсказкам сразу, без ожидания предсказаний
