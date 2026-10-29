@@ -31,7 +31,7 @@ import java.net.URL
 
 // ============================================================================
 // ОБНОВЛЕНИЯ ПО ВОЗДУХУ (OTA)
-// Новая версия — это релиз на GitHub (kotlalipopus/Expressive-Keyboard) с приложенным APK.
+// Новая версия — это релиз на GitHub (Pum3l0/Expressive-keyboard-duo) с приложенным APK.
 // Приложение смотрит последний релиз, сравнивает его номер со своим, скачивает APK и открывает
 // системную установку. Обновление встанет поверх, только если APK подписан тем же ключом.
 // ============================================================================
@@ -39,7 +39,8 @@ import java.net.URL
 data class UpdateInfo(val version: String, val notes: String, val apkUrl: String, val size: Long, val page: String)
 
 object Updater {
-    private const val REPO = "kotlalipopus/Expressive-Keyboard"
+    // DUO: обновления берём из нашего форка, а не из оригинального репозитория
+    private const val REPO = "Pum3l0/Expressive-keyboard-duo"
     private const val PREF_AUTO = "auto_update_check"
 
     /** Найденное обновление (null — его нет или ещё не проверяли). */
@@ -60,12 +61,17 @@ object Updater {
     fun autoEnabled(context: Context): Boolean = KeyboardPrefs.prefs(context).getBoolean(PREF_AUTO, true)
     fun setAuto(context: Context, on: Boolean) = KeyboardPrefs.edit(context) { putBoolean(PREF_AUTO, on) }
 
+    // DUO: версия целиком (например «11.1.6-duo.1»), а не только базовая часть
     fun currentVersion(context: Context): String =
-        runCatching { context.packageManager.getPackageInfo(context.packageName, 0).versionName }.getOrNull().orEmpty().substringBefore('-')
+        runCatching { context.packageManager.getPackageInfo(context.packageName, 0).versionName }.getOrNull().orEmpty()
 
-    /** «11.1.10» > «11.1.9»: сравниваем числа по порядку. */
+    /** «11.1.10» > «11.1.9», а при равной базе сравниваем суффикс форка: «-duo.2» > «-duo.1». */
     internal fun newer(remote: String, local: String): Boolean {
         fun parts(v: String) = v.trim().removePrefix("v").substringBefore('-').split('.').map { it.toIntOrNull() ?: 0 }
+        fun duo(v: String): Int {
+            val m = Regex("duo\\.(\\d+)", RegexOption.IGNORE_CASE).find(v) ?: return 0
+            return m.groupValues[1].toIntOrNull() ?: 0
+        }
         val a = parts(remote)
         val b = parts(local)
         for (i in 0 until maxOf(a.size, b.size)) {
@@ -73,7 +79,7 @@ object Updater {
             val y = b.getOrElse(i) { 0 }
             if (x != y) return x > y
         }
-        return false
+        return duo(remote) > duo(local)
     }
 
     /** Один раз за запуск, если не выключено в настройках. */
@@ -123,7 +129,7 @@ object Updater {
             val name = a.optString("name")
             if (!name.endsWith(".apk", ignoreCase = true) || name.contains("debug", ignoreCase = true)) continue
             // APK с понятным именем — в приоритете; остальные — если другого нет
-            if (best == null || name.startsWith("ExpressiveKeyboard-")) best = a
+            if (best == null || name.startsWith("Expressive-Keyboard-duo-") || name.startsWith("ExpressiveKeyboard-")) best = a
         }
         val apk = best ?: return null
         return UpdateInfo(

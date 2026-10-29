@@ -662,12 +662,15 @@ internal fun ColorsPage(settings: KeyboardSettings) {
     val cs = MaterialTheme.colorScheme
     val scope = rememberCoroutineScope()
     var picker by remember { mutableStateOf<ColorTarget?>(null) }
+    var showCrop by remember { mutableStateOf(false) }
     val auto = remember(cs) { buildKeyPalette(cs, KeyboardSettings()) }
     val bgLauncher = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
         if (uri != null) scope.launch {
             val ok = withContext(Dispatchers.IO) { importBackground(context, uri) }
-            if (ok) KeyboardPrefs.setBackgroundImage(context)
-            else Toast.makeText(context, tr("Не удалось открыть картинку"), Toast.LENGTH_LONG).show()
+            if (ok) {
+                KeyboardPrefs.setBackgroundImage(context)
+                showCrop = true
+            } else Toast.makeText(context, tr("Не удалось открыть картинку"), Toast.LENGTH_LONG).show()
         }
     }
     val monet = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
@@ -800,8 +803,32 @@ internal fun ColorsPage(settings: KeyboardSettings) {
                         onCommit = { v -> KeyboardPrefs.edit(context) { putFloat("bg_blur_dp", v) } }
                     )
                 }
+                ActionItem(
+                    icon = Icons.Rounded.Crop,
+                    title = "Обрезка фона",
+                    subtitle = "Подберите кадр для разложенного и сложенного экрана",
+                    onClick = { showCrop = true }
+                )
             }
         }
+    }
+
+    if (showCrop && settings.hasBackgroundImage) {
+        val landscape = LocalConfiguration.current.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
+        BackgroundCropDialog(
+            version = settings.bgImageVersion,
+            aspect = if (landscape) 3.2f else 2.2f,
+            initialUnfolded = settings.bgCropFor(true),
+            initialFolded = settings.bgCropFor(false),
+            onDismiss = { showCrop = false },
+            onSave = { u, f ->
+                KeyboardPrefs.edit(context) {
+                    putString("bg_crop_unfolded", u.encode())
+                    putString("bg_crop_folded", f.encode())
+                }
+                showCrop = false
+            }
+        )
     }
 
     picker?.let { t ->
@@ -905,9 +932,17 @@ internal fun KeysPage(settings: KeyboardSettings, onNavigate: (SettingsPage) -> 
             format = { "${it.roundToInt()} dp" },
             onCommit = { v -> KeyboardPrefs.edit(context) { putFloat("bottom_offset_dp", v) } }
         )
+        SliderItem(
+            icon = Icons.Rounded.Straighten, title = "Ширина клавиатуры",
+            value = postureSettings.keyWidthPercent, range = 60f..100f,
+            format = { "${it.roundToInt()}%" },
+            onDrag = { v -> KeyboardPrefs.edit(context) { putFloat("key_width_percent_${currentPosture.id}", v) } },
+            onCommit = { v -> KeyboardPrefs.edit(context) { putFloat("key_width_percent_${currentPosture.id}", v) } }
+        )
         val isOverrideSet = settings.postureOverrides.containsKey("key_height_dp_${currentPosture.id}") ||
                 settings.postureOverrides.containsKey("side_padding_dp_${currentPosture.id}") ||
                 settings.postureOverrides.containsKey("key_spacing_dp_${currentPosture.id}") ||
+                settings.postureOverrides.containsKey("key_width_percent_${currentPosture.id}") ||
                 settings.postureOverrides.containsKey("row_spacing_dp_${currentPosture.id}")
         if (isOverrideSet) {
             ActionItem(
@@ -916,7 +951,7 @@ internal fun KeysPage(settings: KeyboardSettings, onNavigate: (SettingsPage) -> 
                 subtitle = tr("Сбросить ручные размеры для «{0}»", tr(currentPosture.title)),
                 onClick = {
                     KeyboardPrefs.edit(context) {
-                        listOf("key_height_dp", "side_padding_dp", "key_spacing_dp", "row_spacing_dp").forEach { p ->
+                        listOf("key_height_dp", "side_padding_dp", "key_spacing_dp", "row_spacing_dp", "key_width_percent").forEach { p ->
                             remove("${p}_${currentPosture.id}")
                         }
                     }
@@ -1153,6 +1188,7 @@ internal fun FoldPage(settings: KeyboardSettings) {
                 "NONE" to "Пустой отступ (Spacer)",
                 "CREASE_LINE" to "Индикатор сгиба экрана",
                 "CUSTOM_IMAGE" to "Своя картинка / GIF / SVG",
+                "TOUCHPAD" to "Сенсорная панель (трекпад)",
                 "PLUGINS" to "Панель плагинов и модов",
                 "CLIPBOARD" to "Буфер обмена",
                 "NUMPAD" to "Цифровой блок (NumPad)",

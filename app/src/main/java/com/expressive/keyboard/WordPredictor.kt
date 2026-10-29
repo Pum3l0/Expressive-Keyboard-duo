@@ -1578,6 +1578,7 @@ object WordPredictorEngine {
     ): String? {
         if (lower.length < 2 || lower.any { !it.isLetter() && it != '\'' && it != '-' }) return null
         if (!lang.autoCorrect || !hasDictionary(lang)) return null
+        // >>> DUO-BEGIN: AGGRESSIVE autocorrect mode (docs/DUO_MERGE.md)
         // DUO: агрессивный режим — как «активный», но с расширенным бюджетом опечаток (2–3 буквы)
         val aggressive = strength == "AGGRESSIVE"
         val normal = strength == "NORMAL" || aggressive

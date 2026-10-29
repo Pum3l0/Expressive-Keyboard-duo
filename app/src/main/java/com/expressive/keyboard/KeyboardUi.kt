@@ -2122,14 +2122,14 @@ fun KeyboardRoot(
                     }
                     if (image != null && bgAlpha > 0.01f) {
                         val blur = settings.bgBlurDp
-                        Image(
-                            bitmap = image,
-                            contentDescription = null,
-                            contentScale = ContentScale.Crop,
-                            alpha = bgAlpha,
-                            modifier = Modifier.matchParentSize()
+                        // DUO: рисуем выбранный кадр обрезки — «разложено» или «сложено»
+                        val unfolded = posture == FoldPosture.UNFOLDED_LANDSCAPE || posture == FoldPosture.UNFOLDED_PORTRAIT
+                        val crop = settings.bgCropFor(unfolded)
+                        Canvas(
+                            Modifier.matchParentSize()
+                                .graphicsLayer { alpha = bgAlpha }
                                 .then(if (blur > 0f && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) Modifier.blur(blur.dp) else Modifier)
-                        )
+                        ) { drawCropped(image, crop) }
                         if (settings.bgDim > 0f) Box(Modifier.matchParentSize().background(palette.background.copy(alpha = settings.bgDim * bgAlpha)))
                     }
                     // фон — до самых краёв экрана, клавиши — в стороне от выреза камеры, боковой панели навигации
@@ -2315,6 +2315,7 @@ internal fun OneHandRail(modifier: Modifier, palette: KeyPalette, mode: String, 
     }
 }
 
+// >>> DUO-BEGIN: central gap widget & touchpad — см. docs/DUO_MERGE.md
 @Composable
 internal fun CentralGapWidget(
     slot: String,
@@ -2471,6 +2472,37 @@ internal fun CentralGapWidget(
                     }
                 }
             }
+            "TOUCHPAD" -> {
+                // DUO: сенсорная панель — ведёшь палец, курсор едет по тексту
+                val stepPx = with(LocalDensity.current) { 16.dp.toPx() }
+                Box(
+                    Modifier.size(min(74.dp, splitGapDp.dp).coerceAtLeast(40.dp))
+                        .clip(RoundedCornerShape(20.dp))
+                        .background(palette.func.copy(alpha = 0.9f))
+                        .pointerInput(Unit) {
+                            awaitEachGesture {
+                                val down = awaitFirstDown(requireUnconsumed = false)
+                                down.consume()
+                                actions.keyTick()
+                                var lastX = down.position.x
+                                var lastY = down.position.y
+                                while (true) {
+                                    val ev = awaitPointerEvent()
+                                    val ch = ev.changes.firstOrNull { it.id == down.id } ?: break
+                                    if (!ch.pressed) break
+                                    ch.consume()
+                                    while (ch.position.x - lastX > stepPx) { lastX += stepPx; actions.moveCursorHorizontal(1) }
+                                    while (lastX - ch.position.x > stepPx) { lastX -= stepPx; actions.moveCursorHorizontal(-1) }
+                                    while (ch.position.y - lastY > stepPx) { lastY += stepPx; actions.moveCursorVertical(1) }
+                                    while (lastY - ch.position.y > stepPx) { lastY -= stepPx; actions.moveCursorVertical(-1) }
+                                }
+                            }
+                        },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(Icons.Rounded.TouchApp, "Трекпад", tint = palette.onFunc, modifier = Modifier.size(22.dp))
+                }
+            }
             "CUSTOM_IMAGE" -> {
                 val context = LocalContext.current
                 val imageFile = remember(settings.centralGapImageVersion) {
@@ -2510,6 +2542,8 @@ internal fun CentralGapWidget(
     }
 }
 
+// <<< DUO-END: central gap widget
+// >>> DUO-BEGIN: split layout helper
 internal fun splitRow(
     row: KeyRow,
     splitMode: String,
@@ -2562,6 +2596,7 @@ internal fun splitRow(
     return leftList to rightList
 }
 
+// <<< DUO-END: split layout helper
 @Composable
 internal fun KeyGrid(
     state: KeyboardState,
@@ -2615,8 +2650,13 @@ internal fun KeyGrid(
     } || split
     val splitGap = settings.splitGapDp.dp
 
-    Box(Modifier.fillMaxSize()) {
-        Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(settings.rowSpacingDp.dp)) {
+    // DUO: ширина клавиатуры в процентах — колонка центрируется, а не растягивается на весь экран
+    val widthFraction = (settings.keyWidthPercent / 100f).coerceIn(0.5f, 1f)
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Column(
+            Modifier.fillMaxHeight().fillMaxWidth(widthFraction),
+            verticalArrangement = Arrangement.spacedBy(settings.rowSpacingDp.dp)
+        ) {
             rows.forEachIndexed { rowIdx, row ->
                 val isNumberRow = row.heightWeight < 1f
                 val isStaggered = isSplit && settings.splitLayout == "STAGGERED" && !isNumberRow && row.keys.any { it.type == KeyType.CHARACTER }

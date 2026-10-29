@@ -204,6 +204,8 @@ interface KeyboardActions {
     fun keyTouch(fx: Float, fy: Float) {}
     fun swipeSpace(direction: Int)
     fun moveCursorVertical(direction: Int) {}
+    /** DUO: горизонтальный сдвиг курсора без оглядки на настройку «свайп по пробелу». */
+    fun moveCursorHorizontal(direction: Int) {}
     fun triggerCreasePulse() {}
     fun pickSuggestion(chip: SuggestionChipModel)
     fun commitText(text: String)
@@ -278,6 +280,9 @@ internal class SafeActions(private val a: KeyboardActions, private val onError: 
     override fun commitKey(key: KeyModel, text: String) = guard { a.commitKey(key, text) }
     override fun keyTouch(fx: Float, fy: Float) = guard { a.keyTouch(fx, fy) }
     override fun swipeSpace(direction: Int) = guard { a.swipeSpace(direction) }
+    override fun moveCursorVertical(direction: Int) = guard { a.moveCursorVertical(direction) }
+    override fun moveCursorHorizontal(direction: Int) = guard { a.moveCursorHorizontal(direction) }
+    override fun triggerCreasePulse() = guard { a.triggerCreasePulse() }
     override fun pickSuggestion(chip: SuggestionChipModel) = guard { a.pickSuggestion(chip) }
     override fun commitText(text: String) = guard { a.commitText(text) }
     override fun commitEmoji(emoji: String) = guard { a.commitEmoji(emoji) }
@@ -603,6 +608,8 @@ class ComposeKeyboardService : InputMethodService(),
     private var composingStart = -1
     private var expSelStart = -1
     private var expSelEnd = -1
+    /** DUO: якорь Shift-выделения трекпадом (позиция курсора в начале выделения). */
+    private var selAnchor = -1
     private var lastCommittedWord = ""
     private var lastTypedChar: Char? = null
     private var undo: UndoAutoCorrectState? = null
@@ -1827,6 +1834,7 @@ class ComposeKeyboardService : InputMethodService(),
         return true
     }
 
+    // >>> DUO-BEGIN: smart comma — авто-запятая перед союзами (docs/DUO_MERGE.md)
     private val CONJUNCTIONS = setOf(
         "что", "чтобы", "потому", "если", "но", "а", "как", "где", "когда", "зачем", "почему", "хотя", "также",
         "because", "which", "although", "however", "but"
@@ -1849,6 +1857,7 @@ class ComposeKeyboardService : InputMethodService(),
         }
     }
 
+    // <<< DUO-END: smart comma
     private fun typeSpace() {
         val ic = currentInputConnection ?: return
         glideWord = false
@@ -2144,6 +2153,8 @@ class ComposeKeyboardService : InputMethodService(),
     private fun commitKeySafe(key: KeyModel, text: String) {
         // любое нажатие меняет текст — слово под курсором и его границы больше не верны
         tapWord = null
+        // DUO: Shift-выделение начинается заново после любого ввода
+        if (key.type != KeyType.SHIFT) selAnchor = -1
         if (kb.fieldEmpty && panelInput == null && (key.type == KeyType.CHARACTER || key.type == KeyType.SPACE)) kb.fieldEmpty = false
         if (kb.clipOffer != null && key.type in OFFER_BREAKERS && panelInput == null) kb.clipOffer = null
         when (key.type) {
@@ -2193,6 +2204,10 @@ class ComposeKeyboardService : InputMethodService(),
         if (settings.spaceSwipe == "CURSOR" && panelInput == null) moveCursor(direction) else toggleLanguage(direction)
     }
 
+    /** DUO: трекпад в центральном виджете — курсор едет всегда, независимо от настройки свайпа по пробелу. */
+    override fun moveCursorHorizontal(direction: Int) = moveCursor(direction)
+
+    // >>> DUO-BEGIN: cursor trackpad & Shift-selection (docs/DUO_MERGE.md)
     override fun moveCursorVertical(direction: Int) {
         val ic = currentInputConnection ?: return
         finishComposing(ic)
@@ -2200,14 +2215,14 @@ class ComposeKeyboardService : InputMethodService(),
         autoSpace = false
         lastActionWasSpace = false
         lastCommittedWord = ""
-        expectUnknown()
-        val code = if (direction > 0) KeyEvent.KEYCODE_DPAD_DOWN else KeyEvent.KEYCODE_DPAD_UP
         if (kb.shift != ShiftState.OFF) {
-            val now = SystemClock.uptimeMillis()
-            ic.sendKeyEvent(KeyEvent(now, now, KeyEvent.ACTION_DOWN, code, 0, KeyEvent.META_SHIFT_ON or KeyEvent.META_SHIFT_LEFT_ON))
-            ic.sendKeyEvent(KeyEvent(now, now, KeyEvent.ACTION_UP, code, 0, KeyEvent.META_SHIFT_ON or KeyEvent.META_SHIFT_LEFT_ON))
+            // DUO: выделение через setSelection — работает во всех приложениях, а не только в нашем тестовом поле
+            val target = lineTarget(ic, cursorPos(ic), direction)
+            extendSelection(ic, target)
         } else {
-            sendDownUpKeyEvents(code)
+            selAnchor = -1
+            expectUnknown()
+            sendDownUpKeyEvents(if (direction > 0) KeyEvent.KEYCODE_DPAD_DOWN else KeyEvent.KEYCODE_DPAD_UP)
         }
         HapticsEngine.tick(this, inputView, settings)
         schedulePredictions()
@@ -2221,6 +2236,48 @@ class ComposeKeyboardService : InputMethodService(),
         composingStart = -1
     }
 
+    /** Позиция курсора в поле (надёжнее, чем только expSelStart). */
+    private fun cursorPos(ic: InputConnection): Int {
+        val before = ic.getTextBeforeCursor(1 shl 20, 0)?.length ?: return max(0, expSelStart)
+        if (expSelStart >= 0 && expSelEnd == expSelStart && before != expSelStart) runCatching { ic.setSelection(before, before) }
+        return before
+    }
+
+    /** Сдвиг на строку вверх/вниз в той же колонке — для вертикального трекпада. */
+    private fun lineTarget(ic: InputConnection, pos: Int, dir: Int): Int {
+        val before = ic.getTextBeforeCursor(pos.coerceAtLeast(0), 0)?.toString() ?: return pos
+        val lineStart = before.lastIndexOf('\n') + 1
+        val column = before.length - lineStart
+        return if (dir < 0) {
+            if (lineStart == 0) pos else {
+                val prevEnd = lineStart - 1
+                val prevStart = before.lastIndexOf('\n', prevEnd - 1) + 1
+                prevStart + min(column, prevEnd - prevStart)
+            }
+        } else {
+            val after = ic.getTextAfterCursor(1 shl 16, 0)?.toString() ?: return pos
+            val nl = after.indexOf('\n')
+            if (nl < 0) pos else {
+                val nextStart = pos + nl + 1
+                val rest = after.substring(nl + 1)
+                val nextNl = rest.indexOf('\n')
+                val lineLen = if (nextNl < 0) rest.length else nextNl
+                nextStart + min(column, lineLen)
+            }
+        }
+    }
+
+    /** Расширяет выделение от якоря до target через setSelection. */
+    private fun extendSelection(ic: InputConnection, target: Int) {
+        val pos = cursorPos(ic)
+        if (selAnchor < 0) selAnchor = pos
+        val lo = min(selAnchor, target).coerceAtLeast(0)
+        val hi = max(selAnchor, target).coerceAtLeast(lo)
+        ic.setSelection(lo, hi)
+        expSelStart = lo
+        expSelEnd = hi
+    }
+
     private fun moveCursor(direction: Int) {
         val ic = currentInputConnection ?: return
         finishComposing(ic)
@@ -2228,19 +2285,19 @@ class ComposeKeyboardService : InputMethodService(),
         autoSpace = false
         lastActionWasSpace = false
         lastCommittedWord = ""
-        expectUnknown()
-        val code = if (direction > 0) KeyEvent.KEYCODE_DPAD_RIGHT else KeyEvent.KEYCODE_DPAD_LEFT
         if (kb.shift != ShiftState.OFF) {
-            val now = SystemClock.uptimeMillis()
-            ic.sendKeyEvent(KeyEvent(now, now, KeyEvent.ACTION_DOWN, code, 0, KeyEvent.META_SHIFT_ON or KeyEvent.META_SHIFT_LEFT_ON))
-            ic.sendKeyEvent(KeyEvent(now, now, KeyEvent.ACTION_UP, code, 0, KeyEvent.META_SHIFT_ON or KeyEvent.META_SHIFT_LEFT_ON))
+            // DUO: выделение через setSelection — работает во всех приложениях
+            extendSelection(ic, cursorPos(ic) + direction)
         } else {
-            sendDownUpKeyEvents(code)
+            selAnchor = -1
+            expectUnknown()
+            sendDownUpKeyEvents(if (direction > 0) KeyEvent.KEYCODE_DPAD_RIGHT else KeyEvent.KEYCODE_DPAD_LEFT)
         }
         HapticsEngine.tick(this, inputView, settings)
         schedulePredictions()
     }
 
+    // <<< DUO-END: cursor trackpad & Shift-selection
     private fun deleteWord() {
         panelInput?.let { t ->
             if (t.isNotEmpty()) panelInput = t.trimEnd().substringBeforeLast(' ', "").let { if (it.isEmpty()) "" else "$it " }

@@ -216,6 +216,9 @@ data class KeyboardSettings(
     val bgTransparency: Float = 0f,
     // --- фон ---
     val bgImageVersion: Long = 0L,
+    // DUO: кадры обрезки фона для «разложено» и «сложено» (см. BgCrop)
+    val bgCropUnfolded: String = "0.5,0.5,1",
+    val bgCropFolded: String = "0.5,0.5,1",
     val bgDim: Float = 0.35f,
     val bgBlurDp: Float = 0f,
     // --- клавиши ---
@@ -334,6 +337,7 @@ data class KeyboardSettings(
     val splitGapDp: Float = 60f,                  // 16f..280f
     val splitSpacebar: Boolean = true,            // Разделять пробел на 2 клавиши
     val adaptiveSidePadding: Boolean = true,      // Адаптивные отступы по бокам в стиле Gboard
+    val keyWidthPercent: Float = 100f,            // DUO: ширина клавиатуры в % (60f..100f)
     val centralGapSlot: String = "NONE",          // NONE | CREASE_LINE | CUSTOM_IMAGE | NUMPAD | SYMBOLS | NAV
     val creaseStyle: String = "GLOW",             // GLOW | LINE | DOTS | GRADIENT
     val creaseOpacity: Float = 0.6f,              // 0.1f..1.0f
@@ -394,7 +398,8 @@ data class KeyboardSettings(
             keyHeightDp = getOverride("key_height_dp", adaptHeight),
             sidePaddingDp = getOverride("side_padding_dp", adaptSide),
             keySpacingDp = getOverride("key_spacing_dp", adaptKeySpacing),
-            rowSpacingDp = getOverride("row_spacing_dp", adaptRowSpacing)
+            rowSpacingDp = getOverride("row_spacing_dp", adaptRowSpacing),
+            keyWidthPercent = getOverride("key_width_percent", keyWidthPercent)
         )
     }
 
@@ -517,6 +522,8 @@ object KeyboardPrefs {
             keyOpacity = p.getFloat("key_opacity", 1f).coerceIn(0.2f, 1f),
             bgTransparency = p.getFloat("bg_transparency", 0f).coerceIn(0f, 1f),
             bgImageVersion = p.getLong("bg_image_version", 0L),
+            bgCropUnfolded = p.getString("bg_crop_unfolded", "0.5,0.5,1") ?: "0.5,0.5,1",
+            bgCropFolded = p.getString("bg_crop_folded", "0.5,0.5,1") ?: "0.5,0.5,1",
             bgDim = p.getFloat("bg_dim", 0.35f).coerceIn(0f, 0.9f),
             bgBlurDp = p.getFloat("bg_blur_dp", 0f).coerceIn(0f, 24f),
             keyLabelScale = p.getFloat("key_label_scale", 1f).coerceIn(0.7f, 1.4f),
@@ -597,6 +604,7 @@ object KeyboardPrefs {
             splitGapDp = p.getFloat("split_gap_dp", 60f).coerceIn(16f, 280f),
             splitSpacebar = p.getBoolean("split_spacebar", true),
             adaptiveSidePadding = p.getBoolean("adaptive_side_padding", true),
+            keyWidthPercent = p.getFloat("key_width_percent", 100f).coerceIn(60f, 100f),
             centralGapSlot = p.getString("central_gap_slot", "NONE") ?: "NONE",
             creaseStyle = p.getString("crease_style", "GLOW") ?: "GLOW",
             creaseOpacity = p.getFloat("crease_opacity", 0.6f).coerceIn(0.1f, 1f),
@@ -606,7 +614,7 @@ object KeyboardPrefs {
             spaceRightSwipeUp = p.getString("space_right_swipe_up", "EMOJI") ?: "EMOJI",
             postureOverrides = buildMap {
                 for (posture in FoldPosture.entries) {
-                    listOf("split_gap_dp", "key_height_dp", "side_padding_dp", "key_spacing_dp", "row_spacing_dp").forEach { param ->
+                    listOf("split_gap_dp", "key_height_dp", "side_padding_dp", "key_spacing_dp", "row_spacing_dp", "key_width_percent").forEach { param ->
                         val k = "${param}_${posture.id}"
                         if (p.contains(k)) put(k, p.getFloat(k, 0f))
                     }
@@ -616,7 +624,8 @@ object KeyboardPrefs {
     }
 
     const val EMOJI_FONT_FILENAME = "emoji_font.ttf"
-    const val GAP_IMAGE_FILENAME = "central_gap_image.jpg"
+    // DUO: храним как есть (PNG/WebP/GIF) — .png в имени, чтобы не терять прозрачность
+    const val GAP_IMAGE_FILENAME = "central_gap_image.png"
 
     fun setCentralGapImage(context: Context) = edit(context) {
         putLong("central_gap_image_version", System.currentTimeMillis())
@@ -651,7 +660,7 @@ object KeyboardPrefs {
             "wave_amplitude_percent", "vibration_ms", "vibration_amplitude", "long_press_ms", "key_opacity", "bg_transparency", "bg_dim",
             "bg_blur_dp", "window_blur_dp", "key_label_scale", "side_padding_dp", "one_handed_w", "press_animation", "sound_volume", "anim_speed",
             // DUO
-            "split_gap_dp", "crease_opacity"
+            "split_gap_dp", "crease_opacity", "key_width_percent"
         ).forEach { put(it, 'f') }
         listOf(
             "wave_count", "seed_color", "color_background", "color_key", "color_key_text", "color_func",
@@ -672,7 +681,9 @@ object KeyboardPrefs {
             "globe_long_press", "window_blur", "hold_mode", "ai_provider", "space_long_action", "languages", "auto_correct_strength", "translate_target", "toolbar_order", "toolbar_hidden", "user_layouts",
             "space_left_key", "space_right_key", "emoji_style", "clipboard_keep", "app_language", "design_style", "skin_options", "anim_press", "anim_popup", "anim_panel", "custom_anims", "lang_layouts",
             // DUO
-            "split_keyboard", "split_mode", "split_layout", "central_gap_slot", "crease_style", "space_left_swipe_up", "space_right_swipe_up"
+            "split_keyboard", "split_mode", "split_layout", "central_gap_slot", "crease_style", "space_left_swipe_up", "space_right_swipe_up",
+            // DUO
+            "bg_crop_unfolded", "bg_crop_folded"
         ).forEach { put(it, 's') }
     }
 

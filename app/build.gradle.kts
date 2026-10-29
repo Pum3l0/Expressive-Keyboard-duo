@@ -144,6 +144,8 @@ dependencies {
 
     implementation("io.coil-kt:coil-compose:2.6.0")
     implementation("io.coil-kt:coil-gif:2.6.0")
+    // DUO: SVG в центральном виджете сплита
+    implementation("io.coil-kt:coil-svg:2.6.0")
 
     implementation("org.mozilla:rhino:1.7.15")
 
