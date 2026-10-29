@@ -2,4 +2,5 @@
 <paths>
     <cache-path name="shared_gifs" path="gifs/" />
     <files-path name="clips" path="clips/" />
+    <cache-path name="updates" path="updates/" />
 </paths>

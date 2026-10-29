@@ -216,9 +216,10 @@ object HapticsEngine {
             if (poolReady) runCatching { pool?.play(poolSound, s.soundVolume, s.soundVolume, 1, 0, if (special) 0.92f else 1f) }
         } else if (s.soundEnabled) runCatching {
             val audio = audio ?: (context.applicationContext.getSystemService(Context.AUDIO_SERVICE) as? AudioManager).also { audio = it }
-            audio?.playSoundEffect(
-                if (special) AudioManager.FX_KEYPRESS_SPACEBAR else AudioManager.FX_KEYPRESS_STANDARD, s.soundVolume
-            )
+            // системный звук — вызов в другой процесс: в свой поток, чтобы касание не ждало его
+            val fx = if (special) AudioManager.FX_KEYPRESS_SPACEBAR else AudioManager.FX_KEYPRESS_STANDARD
+            val vol = s.soundVolume
+            worker.post { runCatching { audio?.playSoundEffect(fx, vol) } }
         }
         if (!s.hapticsEnabled) return
         runCatching {

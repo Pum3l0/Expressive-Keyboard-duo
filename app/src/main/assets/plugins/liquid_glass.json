@@ -1,9 +1,9 @@
 {
   "id": "builtin.liquid-glass",
   "name": "Жидкое стекло",
-  "version": "3.1",
+  "version": "4.1",
   "author": "Expressive Keyboard",
-  "description": "Клавиатура из жидкого стекла: на Android 12+ она по-настоящему размывает приложение под собой, клавиши — матовое стекло с бликом и ободком, нажатие пружинит как желе. На старых версиях — мягкий фон с преломлением.",
+  "description": "Клавиатура из жидкого стекла: на Android 12+ размывает приложение под собой, клавиши — матовое стекло с зерном, бликом и ободком; блик перетекает под палец, нажатие пружинит как желе, а подсказка вытекает из клавиши каплей. В настройках темы — размытие клавиш, зерно, преломление, блик.",
   "icon": "🫧",
   "skin": {
     "keyboard": {
@@ -16,8 +16,23 @@
       },
       "windowBlur": 36,
       "blurTint": "#99EEF1F6",
+      "edge": "#668A93A8",
       "trail": "#992F6BFF",
-      "corner": 28
+      "corner": 28,
+      "orbs": [
+        {
+          "color": "#59B4C6FF",
+          "x": 0.12,
+          "y": 0.15,
+          "r": 0.55
+        },
+        {
+          "color": "#4DFFC9DE",
+          "x": 0.9,
+          "y": 0.45,
+          "r": 0.5
+        }
+      ]
     },
     "colors": {
       "background": "#E6EAF2",
@@ -37,7 +52,9 @@
           "dispersion": 0.08,
           "highlight": 0.75,
           "rim": 0.8,
-          "tint": "#8CFFFFFF"
+          "tint": "#8CFFFFFF",
+          "grain": 0.22,
+          "frost": 0.3
         },
         "pressedBackground": "#FFFFFF",
         "shadow": 5,
@@ -54,8 +71,9 @@
           "dispersion": 0.08,
           "highlight": 0.6,
           "rim": 0.7,
-          "frost": 0.25,
-          "tint": "#59FFFFFF"
+          "frost": 0.3,
+          "tint": "#59FFFFFF",
+          "grain": 0.22
         }
       },
       "enter": {
@@ -116,7 +134,22 @@
           "angle": 90
         },
         "blurTint": "#8C10131C",
-        "trail": "#CCFFFFFF"
+        "edge": "#66FFFFFF",
+        "trail": "#CCFFFFFF",
+        "orbs": [
+          {
+            "color": "#472E5BFF",
+            "x": 0.15,
+            "y": 0.2,
+            "r": 0.55
+          },
+          {
+            "color": "#388E4DFF",
+            "x": 0.85,
+            "y": 0.4,
+            "r": 0.5
+          }
+        ]
       },
       "colors": {
         "background": "#12151F",
@@ -135,7 +168,9 @@
             "dispersion": 0.1,
             "highlight": 0.55,
             "rim": 0.65,
-            "tint": "#24FFFFFF"
+            "tint": "#24FFFFFF",
+            "grain": 0.22,
+            "frost": 0.3
           },
           "pressedBackground": "#73FFFFFF",
           "shadowColor": "#59000000"
@@ -147,8 +182,9 @@
             "dispersion": 0.1,
             "highlight": 0.45,
             "rim": 0.55,
-            "frost": 0.12,
-            "tint": "#14FFFFFF"
+            "frost": 0.3,
+            "tint": "#14FFFFFF",
+            "grain": 0.22
           }
         }
       },
@@ -181,6 +217,114 @@
           "tint": "#14FFFFFF"
         }
       }
-    }
+    },
+    "options": [
+      {
+        "id": "orbs",
+        "title": "Цветные пятна под стеклом",
+        "type": "toggle",
+        "default": true,
+        "off": {
+          "keyboard": {
+            "orbs": []
+          },
+          "dark": {
+            "keyboard": {
+              "orbs": []
+            }
+          }
+        }
+      },
+      {
+        "id": "tint",
+        "title": "Оттенок стекла",
+        "type": "choice",
+        "default": "clear",
+        "choices": [
+          {
+            "id": "clear",
+            "title": "Прозрачное"
+          },
+          {
+            "id": "milk",
+            "title": "Молочное",
+            "patch": {
+              "keys": {
+                "*": {
+                  "glass": {
+                    "tint": "#B3FFFFFF",
+                    "frost": 0.6
+                  }
+                }
+              },
+              "dark": {
+                "keys": {
+                  "*": {
+                    "glass": {
+                      "tint": "#40FFFFFF",
+                      "frost": 0.45
+                    }
+                  }
+                }
+              }
+            }
+          },
+          {
+            "id": "smoke",
+            "title": "Дымчатое",
+            "patch": {
+              "keys": {
+                "*": {
+                  "glass": {
+                    "tint": "#33101828"
+                  }
+                },
+                "func": {
+                  "glass": {
+                    "tint": "#40101828"
+                  }
+                }
+              },
+              "dark": {
+                "keys": {
+                  "*": {
+                    "glass": {
+                      "tint": "#59000000"
+                    }
+                  },
+                  "func": {
+                    "glass": {
+                      "tint": "#66000000"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          {
+            "id": "accent",
+            "title": "Цвета акцента",
+            "patch": {
+              "keys": {
+                "*": {
+                  "glass": {
+                    "tint": "#402F6BFF"
+                  }
+                }
+              },
+              "dark": {
+                "keys": {
+                  "*": {
+                    "glass": {
+                      "tint": "#405C8DFF"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        ]
+      }
+    ]
   }
 }

@@ -167,6 +167,46 @@ data class PluginAction(
     val pinned: Boolean = false           // кнопка прямо на панели инструментов
 )
 
+/** Настройка мода из блока "config": видна в карточке мода, скрипт читает её через kb.config(id). */
+@Immutable
+data class ModOption(
+    val id: String,
+    val title: String,
+    /** toggle | text | choice | slider */
+    val type: String,
+    val default: Any?,
+    val description: String = "",
+    val choices: List<Pair<String, String>> = emptyList(),
+    val min: Float = 0f,
+    val max: Float = 100f,
+    val step: Float = 1f
+)
+
+/** Значения настроек модов: свой файл настроек на мод. */
+object ModConfig {
+    private fun prefs(context: Context, id: String) =
+        context.applicationContext.getSharedPreferences("plugin_config_" + id.replace(Regex("[^A-Za-z0-9._-]"), "_"), Context.MODE_PRIVATE)
+
+    fun get(context: Context, plugin: KeyboardPlugin, o: ModOption): Any? {
+        val all = prefs(context, plugin.id).all
+        return all[o.id] ?: o.default
+    }
+
+    fun all(context: Context, plugin: KeyboardPlugin): Map<String, Any?> = plugin.config.associate { it.id to get(context, plugin, it) }
+
+    fun set(context: Context, plugin: KeyboardPlugin, id: String, value: Any?) {
+        prefs(context, plugin.id).edit().apply {
+            when (value) {
+                null -> remove(id)
+                is Boolean -> putBoolean(id, value)
+                is Number -> putFloat(id, value.toFloat())
+                else -> putString(id, value.toString())
+            }
+        }.apply()
+        ScriptHost.optionChanged(plugin.id, id, value)
+    }
+}
+
 @Immutable
 data class SymbolPack(val title: String, val icon: String, val items: List<String>)
 
@@ -206,7 +246,11 @@ data class KeyboardPlugin(
     val languages: List<KeyboardLanguage> = emptyList(),
     /** Дополнительные слова для подсказок: язык → слова. */
     val dictionary: Map<String, List<String>> = emptyMap(),
-    val enabledByDefault: Boolean = true
+    val enabledByDefault: Boolean = true,
+    /** Исходный JSON оформления: из него собираются варианты по настройкам темы. */
+    val skinJson: String? = null,
+    /** Свои настройки мода (блок "config"). */
+    val config: List<ModOption> = emptyList()
 ) {
     val usesNetwork: Boolean get() = "network" in permissions && (actions.any { it.type == PluginActionType.HTTP } || script != null)
     /** Есть что применить кнопкой «Применить оформление». */
@@ -238,7 +282,7 @@ object PluginParser {
     )
     val LAYOUT_IDS = setOf("symbols", "symbols2")
     private val LANG_ID = Regex("^[a-z]{2,3}([-_][a-z0-9]{2,8})?$")
-    val PERMISSIONS = setOf("network", "read_text", "clipboard")
+    val PERMISSIONS = setOf("network", "read_text", "clipboard", "launch", "ai")
     val KEYS = setOf(
         "tab", "enter", "left", "right", "up", "down", "home", "end", "select_all", "copy", "cut",
         "paste", "undo", "redo", "delete_word", "escape"
@@ -426,8 +470,38 @@ object PluginParser {
             icons = icons,
             languages = languages,
             dictionary = dictionary,
-            enabledByDefault = o.optBoolean("enabledByDefault", true)
+            enabledByDefault = o.optBoolean("enabledByDefault", true),
+            skinJson = o.optJSONObject("skin")?.toString(),
+            config = parseConfig(o.optJSONArray("config"))
         )
+    }
+
+    private fun parseConfig(a: JSONArray?): List<ModOption> {
+        if (a == null) return emptyList()
+        return (0 until min(a.length(), 40)).mapNotNull { i ->
+            val c = a.optJSONObject(i) ?: return@mapNotNull null
+            val oid = c.optString("id").takeIf { Regex("^[A-Za-z0-9_.-]{1,40}$").matches(it) } ?: return@mapNotNull null
+            val type = c.optString("type", "toggle").lowercase().takeIf { it in setOf("toggle", "text", "choice", "slider") } ?: "toggle"
+            val choices = c.optJSONArray("choices")?.let { ch ->
+                (0 until min(ch.length(), 40)).mapNotNull { j ->
+                    when (val x = ch.opt(j)) {
+                        is JSONObject -> x.optString("id").takeIf { it.isNotEmpty() }?.let { it to x.optString("title", it) }
+                        is String -> x to x
+                        else -> null
+                    }
+                }
+            } ?: emptyList()
+            val def: Any? = when (type) {
+                "toggle" -> c.optBoolean("default", false)
+                "slider" -> c.optDouble("default", c.optDouble("min", 0.0)).toFloat()
+                "choice" -> c.optString("default", choices.firstOrNull()?.first.orEmpty())
+                else -> c.optString("default", "")
+            }
+            ModOption(
+                oid, c.optString("title", oid).take(60), type, def, c.optString("description").take(200), choices,
+                c.optDouble("min", 0.0).toFloat(), c.optDouble("max", 100.0).toFloat(), c.optDouble("step", 1.0).toFloat()
+            )
+        }
     }
 
     private val JS_MANIFEST = Regex("/\\*\\s*@plugin\\s*([\\s\\S]*?)\\*/")
@@ -779,9 +853,23 @@ object PluginRepository {
         layouts = lay
     }
 
-    /** Оформление, выбранное в настройках, если его плагин включён. */
+    /** Оформление, выбранное в настройках, если его плагин включён (без настроек темы и акцента). */
     fun activeSkin(settings: KeyboardSettings): KeyboardSkin? = ScriptHost.skinOverride
         ?: if (settings.skinPlugin.isEmpty()) null else active.firstOrNull { it.id == settings.skinPlugin }?.skin
+
+    /** Плагин выбранного оформления. */
+    fun skinPlugin(settings: KeyboardSettings): KeyboardPlugin? =
+        if (settings.skinPlugin.isEmpty()) null else active.firstOrNull { it.id == settings.skinPlugin && it.skin != null }
+
+    /** Оформление для клавиатуры: светлое или тёмное, с настройками темы и в акцентном цвете пользователя. */
+    fun resolvedSkin(settings: KeyboardSettings, dark: Boolean): KeyboardSkin? {
+        ScriptHost.skinOverride?.let { o ->
+            val m = o.forMode(dark)
+            return if (settings.userAccent != 0) ThemeOptions.recolor(m, androidx.compose.ui.graphics.Color(settings.userAccent), settings.colorAccentText) else m
+        }
+        val p = skinPlugin(settings) ?: return null
+        return ThemeOptions.resolve(p, settings, dark)
+    }
 
     /** Тема + настройки + оформление одной кнопкой. */
     fun applyLook(context: Context, p: KeyboardPlugin) {

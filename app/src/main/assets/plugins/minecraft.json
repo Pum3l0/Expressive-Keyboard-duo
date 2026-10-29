@@ -1,0 +1,117 @@
+{
+  "id": "builtin.minecraft",
+  "name": "Minecraft",
+  "version": "1.0",
+  "author": "Expressive Keyboard",
+  "description": "Каменные кнопки из пикселей с объёмной кромкой на фоне из земли, пиксельный шрифт с тенью, зелёный Enter. В настройках темы — доски, глубинный сланец и незер.",
+  "icon": "⛏️",
+  "skin": {
+    "keyboard": {
+      "background": { "pattern": "pixels", "colors": ["#3B2819", "#4A3324", "#2E1F14", "#55402E"], "cell": 3, "seed": 3 },
+      "trail": "#FFFF55",
+      "corner": 4,
+      "font": "pixel"
+    },
+    "colors": {
+      "background": "#3B2819", "key": "#6F6F6F", "keyText": "#FFFFFF",
+      "func": "#555555", "funcText": "#FFFFFF", "accent": "#5B8C32", "accentText": "#FFFFFF"
+    },
+    "keys": {
+      "*": {
+        "material": "bevel",
+        "background": { "pattern": "pixels", "colors": ["#6F6F6F", "#7A7A7A", "#646464", "#6A6A6A"], "cell": 3, "seed": 5 },
+        "pressedBackground": { "pattern": "pixels", "colors": ["#7C86C2", "#8790CC", "#717BB5"], "cell": 3, "seed": 5 },
+        "text": "#FFFFFF",
+        "textShadow": "#3F3F3F",
+        "bevel": 3,
+        "radius": 0,
+        "pressedRadius": 0,
+        "inset": 0.5,
+        "press": "sink",
+        "fontWeight": 500
+      },
+      "func": {
+        "background": { "pattern": "pixels", "colors": ["#555555", "#5E5E5E", "#4A4A4A", "#515151"], "cell": 3, "seed": 9 }
+      },
+      "enter": {
+        "background": { "pattern": "pixels", "colors": ["#5B8C32", "#679C3A", "#4F7A2B", "#47702A"], "cell": 3, "seed": 2 },
+        "pressedBackground": { "pattern": "pixels", "colors": ["#7DBA44", "#88C64E", "#6FA83C"], "cell": 3, "seed": 2 }
+      },
+      "shift": { "text": "#FFFF55" }
+    },
+    "popup": {
+      "radius": 0,
+      "background": "#F0100010",
+      "border": "#5000FF",
+      "text": "#FFFFFF",
+      "pressedBackground": "#5B8C32",
+      "pressedText": "#FFFFFF"
+    },
+    "chips": { "material": "none", "text": "#FFFFFF" },
+    "buttons": {
+      "material": "bevel",
+      "background": { "pattern": "pixels", "colors": ["#6F6F6F", "#7A7A7A", "#646464"], "cell": 3, "seed": 5 },
+      "bevel": 3, "radius": 0, "text": "#FFFFFF"
+    },
+    "panel": {
+      "material": "bevel",
+      "background": { "pattern": "pixels", "colors": ["#2B2B2B", "#303030", "#262626"], "cell": 3, "seed": 4 },
+      "bevel": 3, "radius": 0
+    },
+    "options": [
+      {
+        "id": "texture", "title": "Текстура", "type": "choice", "default": "stone",
+        "choices": [
+          { "id": "stone", "title": "Камень" },
+          {
+            "id": "oak", "title": "Доски",
+            "patch": {
+              "colors": { "key": "#A2834F", "func": "#6B4E2B" },
+              "keys": {
+                "*": { "background": { "pattern": "planks", "colors": ["#A2834F", "#B8945F", "#9C7F4E", "#AD8A54"], "cell": 3, "seed": 0 } },
+                "func": { "background": { "pattern": "planks", "colors": ["#6B4E2B", "#7A5A33", "#5E4426"], "cell": 3, "seed": 1 } }
+              },
+              "buttons": { "background": { "pattern": "planks", "colors": ["#A2834F", "#B8945F", "#9C7F4E"], "cell": 3, "seed": 0 } }
+            }
+          },
+          {
+            "id": "deepslate", "title": "Глубинный сланец",
+            "patch": {
+              "keyboard": { "background": { "pattern": "pixels", "colors": ["#1D1D21", "#25252A", "#18181B", "#2C2C31"], "cell": 3, "seed": 8 }, "trail": "#55FFFF" },
+              "colors": { "background": "#1D1D21", "key": "#4D4D50", "func": "#36363A" },
+              "keys": {
+                "*": { "background": { "pattern": "pixels", "colors": ["#4D4D50", "#545458", "#46464A", "#3E3E42"], "cell": 3, "seed": 6 } },
+                "func": { "background": { "pattern": "pixels", "colors": ["#36363A", "#3B3B3F", "#2F2F33"], "cell": 3, "seed": 6 } },
+                "enter": { "background": { "pattern": "pixels", "colors": ["#2BA6A0", "#35B8B1", "#23908B"], "cell": 3, "seed": 2 } }
+              }
+            }
+          },
+          {
+            "id": "nether", "title": "Незер",
+            "patch": {
+              "keyboard": { "background": { "pattern": "pixels", "colors": ["#2A0F10", "#341314", "#220B0C", "#3D1718"], "cell": 3, "seed": 8 }, "trail": "#FFAA00" },
+              "colors": { "background": "#2A0F10", "key": "#6F3534", "func": "#552828", "accent": "#E36C12" },
+              "keys": {
+                "*": { "background": { "pattern": "pixels", "colors": ["#6F3534", "#7A3A39", "#612E2E", "#552828"], "cell": 3, "seed": 6 } },
+                "func": { "background": { "pattern": "pixels", "colors": ["#4A2222", "#552828", "#3F1C1C"], "cell": 3, "seed": 6 } },
+                "enter": { "background": { "pattern": "pixels", "colors": ["#E36C12", "#F09126", "#CF5509", "#FFB13B"], "cell": 3, "seed": 2 } }
+              }
+            }
+          }
+        ]
+      },
+      {
+        "id": "pixelFont", "title": "Пиксельный шрифт", "type": "toggle", "default": true,
+        "off": { "keyboard": { "font": "" } }
+      },
+      {
+        "id": "outline", "title": "Чёрная обводка кнопок", "type": "toggle", "default": false,
+        "on": { "keys": { "*": { "border": "#000000", "borderWidth": 1 } }, "buttons": { "border": "#000000", "borderWidth": 1 } }
+      },
+      {
+        "id": "shadowText", "title": "Тень у букв", "type": "toggle", "default": true,
+        "off": { "keys": { "*": { "textShadow": "#00000000" } } }
+      }
+    ]
+  }
+}

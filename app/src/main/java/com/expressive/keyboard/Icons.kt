@@ -38,6 +38,7 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -208,14 +209,27 @@ object IconStore {
         return CustomIcon.Label(spec.take(6))
     }
 
-    private val cache = LruCache<String, ImageBitmap>(64)
+    /** Кэш по объёму картинок (8 МБ), а не по их числу: несколько больших картинок не займут всю память. */
+    private val cache = object : LruCache<String, ImageBitmap>(8 * 1024 * 1024) {
+        override fun sizeOf(key: String, value: ImageBitmap): Int = value.asAndroidBitmap().byteCount
+    }
 
     fun decodeDataUri(uri: String): ImageBitmap? {
         cache.get(uri)?.let { return it }
         return runCatching {
             val bytes = Base64.decode(uri.substringAfter(','), Base64.DEFAULT)
-            BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap()
+            decodeBounded(bytes, 512)?.asImageBitmap()
         }.getOrNull()?.also { cache.put(uri, it) }
+    }
+
+    /** Сначала только размеры, потом уменьшенная копия: «картинка-бомба» 20000×20000 не раздуется в памяти. */
+    internal fun decodeBounded(bytes: ByteArray, maxSide: Int): android.graphics.Bitmap? {
+        val o = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, o)
+        if (o.outWidth <= 0 || o.outHeight <= 0) return null
+        var sample = 1
+        while (maxOf(o.outWidth, o.outHeight) / sample > maxSide * 2) sample *= 2
+        return BitmapFactory.decodeByteArray(bytes, 0, bytes.size, BitmapFactory.Options().apply { inSampleSize = sample })
     }
 }
 

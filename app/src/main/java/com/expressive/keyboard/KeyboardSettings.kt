@@ -212,6 +212,8 @@ data class KeyboardSettings(
     val colorAccent: Int = 0,
     val colorAccentText: Int = 0,
     val keyOpacity: Float = 1f,
+    /** Прозрачность фона клавиатуры: 0 — обычный фон, 1 — фона нет, видно только клавиши. */
+    val bgTransparency: Float = 0f,
     // --- фон ---
     val bgImageVersion: Long = 0L,
     val bgDim: Float = 0.35f,
@@ -222,26 +224,42 @@ data class KeyboardSettings(
     val showHints: Boolean = true,
     val sidePaddingDp: Float = 6f,
     val oneHanded: String = "OFF",                // OFF | LEFT | RIGHT
-    val oneHandedWidth: Float = 0.82f,
+    val oneHandedWidth: Float = 0.7f,
     val showSuggestions: Boolean = true,
     val showMicButton: Boolean = true,
     val showEmojiKey: Boolean = true,
     val showGlobeKey: Boolean = true,
     val pressAnimation: Float = 1f,               // 0 = без анимации нажатия
     val panelAnimations: Boolean = true,
+    /** Экономия заряда: в режиме энергосбережения системы клавиши нажимаются без анимаций. */
+    val ecoMode: Boolean = true,
+    /** Анимация нажатия: THEME — из темы, id готовой или своей (Animations.kt). */
+    val animPress: String = "THEME",
+    /** Скорость всех анимаций клавиатуры. */
+    val animSpeed: Float = 1f,
+    /** Появление подсказки над клавишей: POP | ZOOM | SLIDE | FADE | NONE */
+    val animPopup: String = "POP",
+    /** Переход между панелями: SCALE | SLIDE | FADE | NONE */
+    val animPanel: String = "SCALE",
+    /** Свои анимации нажатия (JSON-массив). */
+    val customAnims: String = "",
     // --- ввод ---
     val spaceSwipe: String = "CURSOR",            // CURSOR | LANGUAGE | OFF
     /** Удержание кнопки языка: LANGUAGES | SYSTEM | EMOJI | CLIPBOARD | VOICE | SETTINGS | ONE_HANDED | OFF */
     val globeLongPress: String = "LANGUAGES",
     /** Панель редактирования над клавиатурой: курсор, выделение, копировать/вставить. */
     val editBar: Boolean = false,
-    /** Размытие приложения под клавиатурой: THEME — как в оформлении (у «Жидкого стекла» включено) | ON | OFF */
-    val windowBlur: String = "THEME",
+    /** Размытие приложения под клавиатурой: THEME — как в оформлении | ON | OFF. По умолчанию выключено: оно греет телефон. */
+    val windowBlur: String = "OFF",
     /** Сила размытия, dp. */
     val windowBlurDp: Float = 32f,
     val backspaceSwipe: Boolean = true,           // свайп влево по ⌫ удаляет слово
     val clipboardHistory: Boolean = true,
-    val clipboardSize: Int = 24,
+    val clipboardSize: Int = 50,
+    /** Сколько хранить записи буфера: 1H | 1D | 7D | 30D | FOREVER. */
+    val clipboardKeep: String = "FOREVER",
+    /** Новые скриншоты сами попадают в буфер (нужен доступ к фото). */
+    val clipScreenshots: Boolean = true,
     val soundVolume: Float = 0.6f,
     val giphyKey: String = "",
     /** Свой ключ KLIPY (бесплатный, замена Tenor). */
@@ -267,15 +285,35 @@ data class KeyboardSettings(
     val incognito: Boolean = false,               // не учить слова и не запоминать буфер
     // --- оформление из плагина ---
     val skinPlugin: String = "",
+    /** Настройки тем: JSON { "id темы": { "id настройки": значение } }. */
+    val skinOptions: String = "",
     // --- языки и подсказки ---
     val languages: String = "ru,en",              // включённые языки по порядку
-    val autoCorrectStrength: String = "SAFE",     // SAFE — только уверенные исправления | NORMAL
+    val autoCorrectStrength: String = "NORMAL",   // SAFE — только уверенные исправления | NORMAL — как Gboard
     val dictAutoDownload: Boolean = true,         // скачивать словарь языка при включении
     val punctuationKeys: Boolean = true,          // «,» и «.» по бокам пробела, как в Gboard
     val spaceLeftKey: String = "",                // своя клавиша слева от пробела на буквах: "" — нет
     val spaceRightKey: String = "",               // …и справа
     val systemSpellcheck: Boolean = true,         // спрашивать системную проверку правописания (Gboard, Samsung)
     val smartPunctuation: Boolean = true,         // «слово ,» → «слово,»
+    /** Пробел сам ставится после запятой, «!», «?», «;» и «:» за словом. */
+    val autoSpacePunct: Boolean = true,
+    /** Два дефиса подряд превращаются в длинное тире: «--» → «—». */
+    val dashMerge: Boolean = true,
+    /** Исправлять и там, где приложение просит клавиатуру не исправлять (кроме паролей, почты и адресов). */
+    val correctEverywhere: Boolean = true,
+    /** Динамические зоны клавиш, как на iPhone: у границы клавиш срабатывает буква, вероятнее подходящая к слову. */
+    val dynamicZones: Boolean = true,
+    /** Голосовой ввод чистится ИИ (без «э-э», повторов и оговорок), если задан ключ ИИ. */
+    val aiVoiceCleanup: Boolean = true,
+    /** Кнопка панели функций в строке подсказок. Без неё и без подсказок панель функций видна всегда. */
+    val toolsButton: Boolean = true,
+    /** Что по удержанию буквы: VARIANTS — варианты буквы и символы (как раньше), SYMBOLS — символ с того же места на «?123», как в Gboard. */
+    val holdMode: String = "VARIANTS",
+    /** В альбомной ориентации клавиатура делится на две половины — до букв легко дотянуться большими пальцами. */
+    val landscapeSplit: Boolean = true,
+    /** Свои раскладки языков: JSON { "код языка": ["ряд", "ряд", …] }. */
+    val langLayouts: String = "",
     val translateTarget: String = "en",
     // --- панель инструментов ---
     val toolbarOrder: String = "",
@@ -313,6 +351,7 @@ data class KeyboardSettings(
 
     val hasBackgroundImage: Boolean get() = bgImageVersion != 0L
 
+    /** DUO: параметры геометрии под конкретную posture складного экрана. */
     fun forPosture(posture: FoldPosture): KeyboardSettings {
         fun getOverride(param: String, defaultVal: Float): Float {
             val key = "${param}_${posture.id}"
@@ -359,6 +398,16 @@ data class KeyboardSettings(
         )
     }
 
+    /**
+     * Акцент, который выбрал сам пользователь: «Акцент» в цветах или «Свой цвет» палитры.
+     * В него перекрашивается любая тема; 0 — пользователь ничего не выбирал, у темы свои цвета.
+     */
+    val userAccent: Int get() = when {
+        colorAccent != 0 -> colorAccent
+        colorSource == "SEED" -> seedColor
+        else -> 0
+    }
+
     /** В альбомной ориентации клавиатура занимает не больше ~55% высоты экрана. */
     fun forLandscape(screenHeightDp: Int): KeyboardSettings {
         val rows = if (showNumberRow) 4.78f else 4f
@@ -369,6 +418,14 @@ data class KeyboardSettings(
             keyHeightDp = (budget / rows).coerceIn(30f, keyHeightDp),
             rowSpacingDp = row, bottomOffsetDp = bottom, landscape = true
         )
+    }
+
+    /** Ключи API не попадают ни в логи, ни в отчёты об ошибках. */
+    override fun toString(): String {
+        fun mask(k: String) = if (k.isEmpty()) "" else "•••" + k.takeLast(3)
+        return "KeyboardSettings(theme=$themeMode, skin=$skinPlugin, languages=$languages, ai=$aiProvider, " +
+            "anthropicKey=${mask(anthropicKey)}, geminiKey=${mask(geminiKey)}, openaiKey=${mask(openaiKey)}, groqKey=${mask(groqKey)}, " +
+            "giphyKey=${mask(giphyKey)}, klipyKey=${mask(klipyKey)})"
     }
 
     fun accentSpec(): WavySpec {
@@ -390,6 +447,7 @@ object KeyboardPrefs {
     fun ensureInit(context: Context) {
         if (listener != null) return
         val sp = prefs(context)
+        SecretBox.migrate(sp)
         state.value = read(sp)
         I18n.apply(state.value.appLanguage)
         val l = SharedPreferences.OnSharedPreferenceChangeListener { p, _ ->
@@ -421,10 +479,10 @@ object KeyboardPrefs {
         val font = p.getString("font_style", "ROUNDED")
         return KeyboardSettings(
             themeMode = p.getString("theme_mode", "SYSTEM") ?: "SYSTEM",
-            keyHeightDp = p.getFloat("key_height_dp", 54f).coerceIn(44f, 68f),
+            keyHeightDp = p.getFloat("key_height_dp", 54f).coerceIn(32f, 68f),
             cornerRadiusDp = p.getFloat("corner_radius_dp", 16f).coerceIn(6f, 30f),
             keySpacingDp = p.getFloat("key_spacing_dp", 5f).coerceIn(2f, 8f),
-            rowSpacingDp = p.getFloat("row_spacing_dp", 8f).coerceIn(4f, 12f),
+            rowSpacingDp = p.getFloat("row_spacing_dp", 8f).coerceIn(2f, 12f),
             bottomOffsetDp = p.getFloat("bottom_offset_dp", 8f).coerceIn(0f, 64f),
             shapePreset = p.getString("accent_shape_preset", ExpressiveShapePreset.COOKIE_12.id)
                 ?: ExpressiveShapePreset.COOKIE_12.id,
@@ -457,6 +515,7 @@ object KeyboardPrefs {
             colorAccent = p.getInt("color_accent", 0),
             colorAccentText = p.getInt("color_accent_text", 0),
             keyOpacity = p.getFloat("key_opacity", 1f).coerceIn(0.2f, 1f),
+            bgTransparency = p.getFloat("bg_transparency", 0f).coerceIn(0f, 1f),
             bgImageVersion = p.getLong("bg_image_version", 0L),
             bgDim = p.getFloat("bg_dim", 0.35f).coerceIn(0f, 0.9f),
             bgBlurDp = p.getFloat("bg_blur_dp", 0f).coerceIn(0f, 24f),
@@ -465,29 +524,37 @@ object KeyboardPrefs {
             showHints = p.getBoolean("show_hints", true),
             sidePaddingDp = p.getFloat("side_padding_dp", 6f).coerceIn(0f, 32f),
             oneHanded = p.getString("one_handed", "OFF") ?: "OFF",
-            oneHandedWidth = p.getFloat("one_handed_width", 0.82f).coerceIn(0.65f, 0.95f),
+            oneHandedWidth = p.getFloat("one_handed_w", 0.7f).coerceIn(0.55f, 0.9f),
             showSuggestions = p.getBoolean("show_suggestions", true),
             showMicButton = p.getBoolean("show_mic_button", true),
             showEmojiKey = p.getBoolean("show_emoji_key", true),
             showGlobeKey = p.getBoolean("show_globe_key", true),
             pressAnimation = p.getFloat("press_animation", 1f).coerceIn(0f, 2f),
             panelAnimations = p.getBoolean("panel_animations", true),
+            ecoMode = p.getBoolean("eco_mode", true),
+            animPress = p.getString("anim_press", "THEME") ?: "THEME",
+            animSpeed = p.getFloat("anim_speed", 1f).coerceIn(0.5f, 2f),
+            animPopup = p.getString("anim_popup", "POP") ?: "POP",
+            animPanel = p.getString("anim_panel", "SCALE") ?: "SCALE",
+            customAnims = p.getString("custom_anims", "") ?: "",
             spaceSwipe = p.getString("space_swipe", "CURSOR") ?: "CURSOR",
             globeLongPress = p.getString("globe_long_press", "LANGUAGES") ?: "LANGUAGES",
             editBar = p.getBoolean("edit_bar", false),
-            windowBlur = p.getString("window_blur", "THEME") ?: "THEME",
+            windowBlur = p.getString("window_blur", "OFF") ?: "OFF",
             windowBlurDp = p.getFloat("window_blur_dp", 32f).coerceIn(4f, 100f),
             backspaceSwipe = p.getBoolean("backspace_swipe", true),
             clipboardHistory = p.getBoolean("clipboard_history", true),
-            clipboardSize = p.getInt("clipboard_size", 24).coerceIn(5, 100),
+            clipboardSize = p.getInt("clipboard_size", 50).coerceIn(5, 200),
+            clipboardKeep = p.getString("clipboard_keep", "FOREVER") ?: "FOREVER",
+            clipScreenshots = p.getBoolean("clip_screenshots", true),
             soundVolume = p.getFloat("sound_volume", 0.6f).coerceIn(0.05f, 1f),
-            giphyKey = p.getString("giphy_key", "") ?: "",
-            klipyKey = p.getString("klipy_key", "") ?: "",
-            anthropicKey = p.getString("anthropic_key", "") ?: "",
+            giphyKey = SecretBox.decrypt(p.getString("giphy_key", "") ?: ""),
+            klipyKey = SecretBox.decrypt(p.getString("klipy_key", "") ?: ""),
+            anthropicKey = SecretBox.decrypt(p.getString("anthropic_key", "") ?: ""),
             aiProvider = p.getString("ai_provider", "AUTO") ?: "AUTO",
-            geminiKey = p.getString("gemini_key", "") ?: "",
-            openaiKey = p.getString("openai_key", "") ?: "",
-            groqKey = p.getString("groq_key", "") ?: "",
+            geminiKey = SecretBox.decrypt(p.getString("gemini_key", "") ?: ""),
+            openaiKey = SecretBox.decrypt(p.getString("openai_key", "") ?: ""),
+            groqKey = SecretBox.decrypt(p.getString("groq_key", "") ?: ""),
             instantInput = p.getBoolean("instant_input", true),
             glideTyping = p.getBoolean("glide_typing", true),
             glideTrail = p.getBoolean("glide_trail", true),
@@ -498,14 +565,24 @@ object KeyboardPrefs {
             autoPair = p.getBoolean("auto_pair", false),
             incognito = p.getBoolean("incognito", false),
             skinPlugin = p.getString("skin_plugin", "") ?: "",
+            skinOptions = p.getString("skin_options", "") ?: "",
             languages = p.getString("languages", "ru,en")?.ifBlank { "ru,en" } ?: "ru,en",
-            autoCorrectStrength = p.getString("auto_correct_strength", "SAFE") ?: "SAFE",
+            autoCorrectStrength = p.getString("auto_correct_strength", "NORMAL") ?: "NORMAL",
             dictAutoDownload = p.getBoolean("dict_auto_download", true),
             punctuationKeys = p.getBoolean("punctuation_keys", true),
             spaceLeftKey = p.getString("space_left_key", "") ?: "",
             spaceRightKey = p.getString("space_right_key", "") ?: "",
             systemSpellcheck = p.getBoolean("system_spellcheck", true),
             smartPunctuation = p.getBoolean("smart_punctuation", true),
+            autoSpacePunct = p.getBoolean("auto_space_punct", true),
+            dashMerge = p.getBoolean("dash_merge", true),
+            correctEverywhere = p.getBoolean("correct_everywhere", true),
+            dynamicZones = p.getBoolean("dynamic_zones", true),
+            aiVoiceCleanup = p.getBoolean("ai_voice_cleanup", true),
+            toolsButton = p.getBoolean("tools_button", true),
+            holdMode = p.getString("hold_mode", "VARIANTS") ?: "VARIANTS",
+            landscapeSplit = p.getBoolean("landscape_split", true),
+            langLayouts = p.getString("lang_layouts", "") ?: "",
             translateTarget = p.getString("translate_target", "en") ?: "en",
             toolbarOrder = p.getString("toolbar_order", "") ?: "",
             toolbarHidden = p.getString("toolbar_hidden", "") ?: "",
@@ -571,8 +648,9 @@ object KeyboardPrefs {
     val KEY_TYPES: Map<String, Char> = buildMap {
         listOf(
             "key_height_dp", "corner_radius_dp", "key_spacing_dp", "row_spacing_dp", "bottom_offset_dp",
-            "wave_amplitude_percent", "vibration_ms", "vibration_amplitude", "long_press_ms", "key_opacity", "bg_dim",
-            "bg_blur_dp", "window_blur_dp", "key_label_scale", "side_padding_dp", "one_handed_width", "press_animation", "sound_volume",
+            "wave_amplitude_percent", "vibration_ms", "vibration_amplitude", "long_press_ms", "key_opacity", "bg_transparency", "bg_dim",
+            "bg_blur_dp", "window_blur_dp", "key_label_scale", "side_padding_dp", "one_handed_w", "press_animation", "sound_volume", "anim_speed",
+            // DUO
             "split_gap_dp", "crease_opacity"
         ).forEach { put(it, 'f') }
         listOf(
@@ -585,12 +663,15 @@ object KeyboardPrefs {
             "show_hints", "show_suggestions", "show_mic_button", "show_emoji_key", "show_globe_key", "panel_animations",
             "backspace_swipe", "clipboard_history", "instant_input", "glide_typing", "glide_trail", "swipe_up_hint",
             "space_long_press", "auto_pair", "incognito", "dict_auto_download", "punctuation_keys", "smart_punctuation",
-            "system_spellcheck", "edit_bar", "split_spacebar", "adaptive_side_padding", "crease_wave_enabled"
+            "system_spellcheck", "edit_bar", "auto_space_punct", "eco_mode", "dash_merge", "clip_screenshots", "correct_everywhere", "dynamic_zones", "ai_voice_cleanup", "tools_button", "landscape_split",
+            // DUO
+            "split_spacebar", "adaptive_side_padding", "crease_wave_enabled"
         ).forEach { put(it, 'b') }
         listOf(
             "theme_mode", "accent_shape_preset", "haptic_mode", "font_style", "color_source", "one_handed", "space_swipe",
-            "globe_long_press", "window_blur", "ai_provider", "space_long_action", "languages", "auto_correct_strength", "translate_target", "toolbar_order", "toolbar_hidden", "user_layouts",
-            "space_left_key", "space_right_key", "emoji_style", "app_language", "design_style",
+            "globe_long_press", "window_blur", "hold_mode", "ai_provider", "space_long_action", "languages", "auto_correct_strength", "translate_target", "toolbar_order", "toolbar_hidden", "user_layouts",
+            "space_left_key", "space_right_key", "emoji_style", "clipboard_keep", "app_language", "design_style", "skin_options", "anim_press", "anim_popup", "anim_panel", "custom_anims", "lang_layouts",
+            // DUO
             "split_keyboard", "split_mode", "split_layout", "central_gap_slot", "crease_style", "space_left_swipe_up", "space_right_swipe_up"
         ).forEach { put(it, 's') }
     }
@@ -629,7 +710,7 @@ object KeyboardPrefs {
     fun resetColors(context: Context) = edit(context) {
         listOf(
             "color_background", "color_key", "color_key_text", "color_func",
-            "color_func_text", "color_accent", "color_accent_text", "key_opacity"
+            "color_func_text", "color_accent", "color_accent_text", "key_opacity", "bg_transparency"
         ).forEach { remove(it) }
     }
 
@@ -640,6 +721,8 @@ object KeyboardPrefs {
         root.put("version", 1)
         val values = JSONObject()
         for ((k, v) in prefs(context).all) {
+            // ключи API в файл настроек не попадают: его могут переслать или выложить
+            if (k in SecretBox.SECRET_PREFS) continue
             val item = JSONObject()
             when (v) {
                 is Boolean -> item.put("t", "b").put("v", v)
@@ -666,6 +749,7 @@ object KeyboardPrefs {
             while (keys.hasNext()) {
                 val k = keys.next()
                 if (k == "bg_image_version" || k == "custom_font_version" || k == "custom_font_name" || k == "emoji_font_version") continue
+                if (k in SecretBox.SECRET_PREFS) continue
                 val item = values.optJSONObject(k) ?: continue
                 when (item.optString("t")) {
                     "b" -> putBoolean(k, item.optBoolean("v"))

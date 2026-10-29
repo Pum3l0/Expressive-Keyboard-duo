@@ -155,3 +155,32 @@ internal const val ENTER_NEWLINE = -100
 internal val BackgroundErrors = kotlinx.coroutines.CoroutineExceptionHandler { _, e ->
     android.util.Log.e("ExpressiveKeyboard", "background task failed", e)
 }
+
+/**
+ * Ответ сервера целиком, но не больше max байт: огромный или бесконечный ответ не съест память
+ * клавиатуры (её процесс система закрывает первым при нехватке памяти).
+ */
+internal fun java.io.InputStream.readLimited(max: Int = 2 shl 20): String = use { input ->
+    val out = java.io.ByteArrayOutputStream()
+    val buf = ByteArray(8192)
+    while (true) {
+        val n = input.read(buf)
+        if (n < 0) break
+        out.write(buf, 0, n)
+        if (out.size() > max) throw java.io.IOException("ответ сервера слишком большой")
+    }
+    out.toString(Charsets.UTF_8.name())
+}
+
+
+/** Включено ли энергосбережение системы — тогда клавиши нажимаются без анимаций. */
+object PowerState {
+    var saver by androidx.compose.runtime.mutableStateOf(false)
+        private set
+
+    fun update(context: android.content.Context) {
+        saver = runCatching {
+            (context.getSystemService(android.content.Context.POWER_SERVICE) as android.os.PowerManager).isPowerSaveMode
+        }.getOrDefault(false)
+    }
+}

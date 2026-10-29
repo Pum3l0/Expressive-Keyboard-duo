@@ -47,6 +47,37 @@ enum class AiProvider(val id: String, val title: String) {
     }
 }
 
+/**
+ * Что сделать с текстом. Исправление умеют все сервисы, остальное (тон, сокращение, своё указание, дописать,
+ * очистка диктовки) — только ИИ по ключу: Gemini Nano на телефоне и LanguageTool умеют лишь исправлять.
+ */
+enum class AiTask(val id: String, val title: String, val icon: String, val prompt: String) {
+    PROOFREAD("proofread", "Исправить", "✓", ""),
+    PROFESSIONAL("professional", "Деловой", "💼",
+        "Rewrite the text in a professional, polite and clear business tone. Keep every fact and the meaning."),
+    CASUAL("casual", "Дружелюбный", "😊",
+        "Rewrite the text in a relaxed, friendly, conversational tone, as if writing to a friend. Keep the meaning."),
+    CONCISE("concise", "Короче", "✂️",
+        "Make the text noticeably shorter and clearer: remove filler and repetition, keep every important point."),
+    EMOTIVE("emotive", "Эмоциональнее", "🔥",
+        "Rewrite the text to be warmer, more expressive and emotional, while keeping the meaning."),
+    EMOJIFY("emojify", "Эмодзи", "✨",
+        "Keep the text as it is (fix obvious typos only) and add fitting emoji in natural places. Do not overdo it."),
+    ELABORATE("elaborate", "Подробнее", "📝",
+        "Expand the text a little: make it more complete and detailed, keeping the same tone and meaning."),
+    CONTINUE("continue", "Дописать", "✍️",
+        "Continue the text naturally with the most likely next words: from a few words up to one sentence, in the same " +
+            "language, voice and style. Reply with the continuation only, do not repeat the given text."),
+    CUSTOM("custom", "Своё указание", "🪄", ""),
+    DICTATION("dictation", "Очистить диктовку", "🎙", "");
+
+    companion object {
+        fun from(id: String) = entries.firstOrNull { it.id == id } ?: PROOFREAD
+        /** Кнопки панели «ИИ» по порядку. */
+        val TOOLS = listOf(PROOFREAD, PROFESSIONAL, CASUAL, CONCISE, EMOTIVE, EMOJIFY, ELABORATE, CONTINUE)
+    }
+}
+
 /** Ключи и выбор сервиса — из настроек. */
 data class AiKeys(val provider: AiProvider, val gemini: String, val claude: String, val openai: String, val groq: String)
 
@@ -63,6 +94,80 @@ object AiFix {
         shorten, expand, explain or add anything. If the text is already correct, return it unchanged.
         Reply with the corrected text only.
     """.trimIndent()
+
+    private val REWRITE = """
+        You are a writing assistant built into a phone keyboard. You get text the user typed and a task.
+        Always answer in the same language as the text (never translate unless the task explicitly asks).
+        Keep names, numbers, links and facts. Fix typos along the way. No quotes around the answer, no comments,
+        no explanations, no alternatives. Reply with the resulting text only.
+    """.trimIndent()
+
+    private val CUSTOM = """
+        You are a writing assistant built into a phone keyboard. Follow the user's instruction. If text is given,
+        apply the instruction to that text (edit, rewrite, translate, reply to it, whatever is asked); if no text is
+        given, write what the instruction asks for. Use the language of the text, or of the instruction if there is
+        no text, unless the instruction asks otherwise. Reply with the resulting text only, without quotes,
+        comments or explanations.
+    """.trimIndent()
+
+    private val DICTATION = """
+        You clean up speech-to-text dictation like a careful human transcriber. Remove filler words and hesitations
+        (um, uh, er, like, you know, ну, э, это самое, короче, типа, как бы, вот), stutters, repeated words and false
+        starts. When the speaker corrects themselves ("at two, no, three"), keep only the correction ("at three").
+        Add proper punctuation, capitalization and paragraph breaks; write numbers, times and dates naturally.
+        Keep the speaker's words, language, meaning and style: do not rephrase, summarize, translate or add anything.
+        Reply with the cleaned text only.
+    """.trimIndent()
+
+    /** Есть ли ключ хоть одного ИИ-сервиса (без него доступно только исправление). */
+    fun hasLlm(keys: AiKeys): Boolean = listOf(keys.gemini, keys.claude, keys.openai, keys.groq).any { it.isNotBlank() }
+
+    /**
+     * Любая задача панели «ИИ». Для всего, кроме исправления, нужен ИИ по ключу: сначала выбранный в настройках
+     * сервис, потом любой другой с ключом.
+     */
+    suspend fun run(
+        context: Context, text: String, keys: AiKeys, lang: String, task: AiTask, instruction: String = ""
+    ): Result<Pair<String, AiProvider>> = withContext(Dispatchers.IO) {
+        if (task == AiTask.PROOFREAD) return@withContext fix(context, text, keys, lang)
+        if (text.isBlank() && task != AiTask.CUSTOM) return@withContext Result.failure(IllegalArgumentException(tr("Нет текста")))
+        if (text.length > MAX_CHARS) return@withContext Result.failure(IllegalArgumentException(tr("Слишком длинный текст")))
+        val order = buildList {
+            if (keys.provider in listOf(AiProvider.GEMINI, AiProvider.CLAUDE, AiProvider.OPENAI, AiProvider.GROQ)) add(keys.provider)
+            if (keys.gemini.isNotBlank()) add(AiProvider.GEMINI)
+            if (keys.claude.isNotBlank()) add(AiProvider.CLAUDE)
+            if (keys.openai.isNotBlank()) add(AiProvider.OPENAI)
+            if (keys.groq.isNotBlank()) add(AiProvider.GROQ)
+        }.distinct()
+        if (order.isEmpty()) {
+            return@withContext Result.failure(IllegalStateException(tr("Нужен ключ ИИ: Настройки → Набор текста → ключ Gemini (бесплатно)")))
+        }
+        val (system, user) = when (task) {
+            AiTask.CUSTOM -> CUSTOM to (if (text.isBlank()) "Instruction: $instruction" else "Instruction: $instruction\n\nText:\n$text")
+            AiTask.DICTATION -> DICTATION to text
+            else -> REWRITE to "Task: ${task.prompt}\n\nText:\n$text"
+        }
+        var last: Throwable? = null
+        for (p in order) {
+            try {
+                val out = ask(p, system, user, keys)
+                return@withContext Result.success((if (task == AiTask.CONTINUE) out.trimEnd() else out.trim()) to p)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                last = if (e is Skip || e is IllegalStateException) e else IllegalStateException(e.message ?: e.javaClass.simpleName)
+            }
+        }
+        Result.failure(last ?: IllegalStateException(tr("Не удалось обработать текст")))
+    }
+
+    private fun ask(p: AiProvider, system: String, user: String, keys: AiKeys): String = when (p) {
+        AiProvider.GEMINI -> gemini(user, keys.gemini.trim(), system)
+        AiProvider.CLAUDE -> claude(user, keys.claude.trim(), system)
+        AiProvider.OPENAI -> openAiCompatible("https://api.openai.com/v1", OPENAI_MODEL, user, keys.openai.trim(), "OpenAI", system)
+        AiProvider.GROQ -> openAiCompatible("https://api.groq.com/openai/v1", GROQ_MODEL, user, keys.groq.trim(), "Groq", system)
+        else -> throw Skip("unsupported")
+    }
 
     /** Ошибка, после которой в режиме «Авто» стоит попробовать следующий сервис (а не показывать её сразу). */
     private class Skip(message: String) : Exception(message)
@@ -194,11 +299,11 @@ object AiFix {
             }
     }
 
-    private fun claude(text: String, key: String): String = try {
+    private fun claude(text: String, key: String, system: String = SYSTEM): String = try {
         val params = MessageCreateParams.builder()
             .model(CLAUDE_MODEL)
             .maxTokens(16000L)
-            .system(SYSTEM)
+            .system(system)
             // простая правка: низкое усилие — быстрее ответ
             .outputConfig(OutputConfig.builder().effort(OutputConfig.Effort.LOW).build())
             .addUserMessage(text)
@@ -235,7 +340,7 @@ object AiFix {
         try {
             conn.outputStream.use { it.write(body.toString().toByteArray()) }
             val code = conn.responseCode
-            val raw = (if (code in 200..299) conn.inputStream else conn.errorStream)?.bufferedReader()?.use { it.readText() }.orEmpty()
+            val raw = (if (code in 200..299) conn.inputStream else conn.errorStream)?.readLimited().orEmpty()
             // пояснение от самого сервиса — чтобы по сообщению было видно причину
             val detail = runCatching {
                 JSONObject(raw).let { o -> o.optJSONObject("error")?.optString("message") ?: o.optString("message") }
@@ -255,9 +360,9 @@ object AiFix {
         }
     }
 
-    private fun gemini(text: String, key: String): String {
+    private fun gemini(text: String, key: String, system: String = SYSTEM): String {
         val body = JSONObject()
-            .put("systemInstruction", JSONObject().put("parts", JSONArray().put(JSONObject().put("text", SYSTEM))))
+            .put("systemInstruction", JSONObject().put("parts", JSONArray().put(JSONObject().put("text", system))))
             .put("contents", JSONArray().put(JSONObject().put("role", "user").put("parts", JSONArray().put(JSONObject().put("text", text)))))
         val root = post(
             "https://generativelanguage.googleapis.com/v1beta/models/$GEMINI_MODEL:generateContent",
@@ -273,16 +378,16 @@ object AiFix {
      * OpenAI и всё, что говорит на его языке (Groq): /chat/completions. Если модели нет (404) — спрашиваем
      * у сервиса список моделей, доступных ключу, берём подходящую и запоминаем её.
      */
-    private fun openAiCompatible(base: String, model: String, text: String, key: String, name: String): String {
+    private fun openAiCompatible(base: String, model: String, text: String, key: String, name: String, system: String = SYSTEM): String {
         val current = pickedModel[base] ?: model
         return try {
-            chat(base, current, text, key, name)
+            chat(base, current, text, key, name, system)
         } catch (e: ModelNotFound) {
             val other = availableModel(base, key, name, preferred = listOf(model)) ?: throw IllegalStateException(e.message)
             if (other == current) throw IllegalStateException(e.message)
             pickedModel[base] = other
             try {
-                chat(base, other, text, key, name)
+                chat(base, other, text, key, name, system)
             } catch (e2: ModelNotFound) {
                 throw IllegalStateException(e2.message)
             }
@@ -298,7 +403,7 @@ object AiFix {
         }
         try {
             if (conn.responseCode !in 200..299) return@runCatching null
-            val data = JSONObject(conn.inputStream.bufferedReader().use { it.readText() }).optJSONArray("data") ?: return@runCatching null
+            val data = JSONObject(conn.inputStream.readLimited()).optJSONArray("data") ?: return@runCatching null
             val ids = (0 until data.length()).mapNotNull { data.optJSONObject(it)?.optString("id")?.takeIf { s -> s.isNotBlank() } }
             // не чат-модели: распознавание речи, озвучка, модерация, эмбеддинги, картинки
             val chat = ids.filter { id ->
@@ -315,12 +420,12 @@ object AiFix {
         }
     }.getOrNull()
 
-    private fun chat(base: String, model: String, text: String, key: String, name: String): String {
+    private fun chat(base: String, model: String, text: String, key: String, name: String, system: String = SYSTEM): String {
         val body = JSONObject()
             .put("model", model)
             .put(
                 "messages", JSONArray()
-                    .put(JSONObject().put("role", "system").put("content", SYSTEM))
+                    .put(JSONObject().put("role", "system").put("content", system))
                     .put(JSONObject().put("role", "user").put("content", text))
             )
         val root = post("$base/chat/completions", body, mapOf("Authorization" to "Bearer $key"), name)
@@ -366,7 +471,7 @@ object AiFix {
             if (code == 429) throw IllegalStateException(tr("Слишком много запросов — попробуйте через минуту"))
             if (code == 400 && retry) throw UnsupportedLanguage()
             if (code !in 200..299) throw IllegalStateException(tr("Ошибка {0}: {1}", "LanguageTool", code))
-            val root = JSONObject(conn.inputStream.bufferedReader().use { it.readText() })
+            val root = JSONObject(conn.inputStream.readLimited())
             val matches = root.optJSONArray("matches") ?: return text
             val fixes = (0 until matches.length()).mapNotNull { i ->
                 val m = matches.getJSONObject(i)

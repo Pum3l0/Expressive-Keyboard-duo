@@ -143,7 +143,9 @@ enum class KeyType { CHARACTER, SHIFT, BACKSPACE, MODE_SYMBOLS, SYMBOLS_PAGE, GL
 enum class ShiftState { OFF, SINGLE, CAPS_LOCK }
 
 /** EMOJI_SEARCH / GIF_SEARCH — поиск: клавиатура печатает в строку поиска. */
-enum class ActivePanel { KEYBOARD, EMOJI, EMOJI_SEARCH, TRANSLATE, GIF, GIF_SEARCH, CLIPBOARD, VOICE, PLUGINS }
+/** AI_WRITE — панель «ИИ» над клавиатурой, AI_PROMPT — клавиатура печатает своё указание для ИИ. */
+/** SCRIPT_INPUT — клавиатура печатает в поле ввода мода (kb.prompt и элемент input на панели мода). */
+enum class ActivePanel { KEYBOARD, EMOJI, EMOJI_SEARCH, TRANSLATE, GIF, GIF_SEARCH, CLIPBOARD, VOICE, PLUGINS, AI_WRITE, AI_PROMPT, SCRIPT_INPUT }
 
 @Immutable
 data class KeyModel(
@@ -261,19 +263,27 @@ object KeyboardLayouts {
         val withPunct = punct && !letters
         val left = if (letters) slotKey(leftSlot) else null
         val right = if (letters) slotKey(rightSlot) else null
-        val spaceWeight = 3.9f + (if (globe) 0f else 1.1f) + (if (emoji) 0f else 1.1f) - (if (withPunct) 1.6f else 0f) -
-            (left?.weight ?: 0f) - (right?.weight ?: 0f)
+        // ряд — 11 долей, как ряд из 11 букв; пробел забирает всё, что осталось от остальных клавиш. Раньше каждая
+        // добавленная клавиша («,» у пробела) отнимала ширину только у пробела, и он становился совсем узким
+        val small = listOf(globe, emoji, withPunct, withPunct, left != null, right != null).count { it }
+        val tight = small >= 3
+        val modeW = if (tight) 1.3f else 1.5f
+        val enterW = if (tight) 1.4f else 1.6f
+        val sideW = if (tight) 0.9f else 1f
+        val others = modeW + enterW + (if (globe) sideW else 0f) + (if (emoji) sideW else 0f) + (if (withPunct) 2 * sideW else 0f) +
+            (if (left != null) sideW else 0f) + (if (right != null) sideW else 0f)
+        val spaceWeight = max(4.4f, 11f - others)
         return KeyRow(
             buildList {
-                add(KeyModel(mode, KeyType.MODE_SYMBOLS, if (withPunct) 1.35f else 1.5f, if (letters && !withPunct) punctuation else emptyList()))
-                if (globe) add(KeyModel("globe", KeyType.GLOBE, if (withPunct) 1f else 1.1f, if (languages.size > 1) languages else emptyList()))
-                if (emoji) add(KeyModel("emoji", KeyType.STICKERS, if (withPunct) 1f else 1.1f))
-                if (withPunct) add(KeyModel(",", weight = 0.9f, customVariants = COMMA_VARIANTS))
-                left?.let { add(it) }
-                add(KeyModel(space, KeyType.SPACE, max(2.2f, spaceWeight)))
-                right?.let { add(it) }
-                if (withPunct) add(KeyModel(".", weight = 0.9f, customVariants = PERIOD_VARIANTS))
-                add(KeyModel("enter", KeyType.ENTER, if (withPunct) 1.6f else 1.8f))
+                add(KeyModel(mode, KeyType.MODE_SYMBOLS, modeW, if (letters && !withPunct) punctuation else emptyList()))
+                if (globe) add(KeyModel("globe", KeyType.GLOBE, sideW, if (languages.size > 1) languages else emptyList()))
+                if (emoji) add(KeyModel("emoji", KeyType.STICKERS, sideW))
+                if (withPunct) add(KeyModel(",", weight = sideW, customVariants = COMMA_VARIANTS))
+                left?.let { add(it.copy(weight = sideW)) }
+                add(KeyModel(space, KeyType.SPACE, spaceWeight))
+                right?.let { add(it.copy(weight = sideW)) }
+                if (withPunct) add(KeyModel(".", weight = sideW, customVariants = PERIOD_VARIANTS))
+                add(KeyModel("enter", KeyType.ENTER, enterW))
             }
         )
     }
@@ -304,12 +314,13 @@ object KeyboardLayouts {
         KeyRow(listOf(KeyModel("?123", KeyType.SYMBOLS_PAGE, 1.45f)) + c("%", "©", "®", "™", "✓", "[", "]") + back(1.5f))
     )
 
-    private val languageRows = java.util.concurrent.ConcurrentHashMap<KeyboardLanguage, List<KeyRow>>()
+    /** Ряды по языку и его буквам: своя раскладка того же языка — другой ключ. */
+    private val languageRows = java.util.concurrent.ConcurrentHashMap<Pair<String, List<List<String>>>, List<KeyRow>>()
 
-    private fun lettersFor(lang: KeyboardLanguage): List<KeyRow> = when (lang.id) {
-        "ru" -> if (lang.fromPlugin == null) russianLetters else Languages.buildRows(lang)
-        "en" -> if (lang.fromPlugin == null) englishLetters else Languages.buildRows(lang)
-        else -> languageRows.getOrPut(lang) { Languages.buildRows(lang) }
+    private fun lettersFor(lang: KeyboardLanguage): List<KeyRow> = when {
+        lang.id == "ru" && lang.fromPlugin == null && !lang.customLayout -> russianLetters
+        lang.id == "en" && lang.fromPlugin == null && !lang.customLayout -> englishLetters
+        else -> languageRows.getOrPut(lang.id to lang.rows) { Languages.buildRows(lang) }
     }
 
     fun rows(
@@ -341,14 +352,72 @@ object KeyboardLayouts {
         // свои места клавиш (настройки → «Свои места клавиш»)
         val order = user[id]
         return when (page) {
-            1 -> UserLayouts.apply(custom ?: symbols1, order) + bottom("ABC", lang.spaceLabel, false, globe, emoji, punct, languages)
-            2 -> UserLayouts.apply(custom ?: symbols2, order) + bottom("ABC", lang.spaceLabel, false, globe, emoji, punct, languages)
+            1 -> UserLayouts.apply(custom ?: symbols1, order, bottom("ABC", lang.spaceLabel, false, globe, emoji, punct, languages))
+            2 -> UserLayouts.apply(custom ?: symbols2, order, bottom("ABC", lang.spaceLabel, false, globe, emoji, punct, languages))
             else -> {
-                val letters = UserLayouts.apply(custom ?: lettersFor(lang), order)
-                val base = letters + bottom("?123", lang.spaceLabel, true, globe, emoji, punct, languages, leftSlot, rightSlot)
-                if (withNumbers) listOf(numberRow) + base else base
+                val base = UserLayouts.apply(
+                    custom ?: lettersFor(lang), order,
+                    bottom("?123", lang.spaceLabel, true, globe, emoji, punct, languages, leftSlot, rightSlot)
+                )
+                if (withNumbers) UserLayouts.apply(listOf(numberRow), user[UserLayouts.NUMBERS]) + base else base
             }
         }
+    }
+
+    /**
+     * Раздельная клавиатура (альбомная ориентация): в каждом ряду посередине промежуток, пробел делится на два —
+     * по половине под каждый большой палец. Промежуток одинаковой доли во всех рядах, поэтому половины ровные.
+     */
+    fun split(rows: List<KeyRow>, gapShare: Float = 0.3f): List<KeyRow> = rows.map { row ->
+        val total = row.keys.sumOf { it.weight.toDouble() }.toFloat()
+        val gapW = total * gapShare / (1f - gapShare)
+        val keys = row.keys
+        val space = keys.indexOfFirst { it.type == KeyType.SPACE }
+        val out = ArrayList<KeyModel>(keys.size + 2)
+        if (space >= 0) {
+            val sp = keys[space]
+            keys.forEachIndexed { i, k ->
+                if (i == space) {
+                    out += sp.copy(weight = sp.weight / 2f)
+                    out += KeyModel("", KeyType.SPACER, gapW)
+                    out += sp.copy(weight = sp.weight / 2f)
+                } else out += k
+            }
+        } else {
+            // промежуток — там, где ряд делится пополам по ширине
+            var acc = 0f
+            var at = keys.size / 2
+            for ((i, k) in keys.withIndex()) {
+                if (acc + k.weight / 2f >= total / 2f) {
+                    at = i
+                    break
+                }
+                acc += k.weight
+            }
+            keys.forEachIndexed { i, k ->
+                if (i == at) out += KeyModel("", KeyType.SPACER, gapW)
+                out += k
+            }
+        }
+        KeyRow(out, row.heightWeight)
+    }
+
+    /**
+     * Удержание как в Gboard: буква → символ с того же места на странице «?123» (й/q → 1, ф/a → @ …).
+     * Ряды букв без ряда цифр и нижнего ряда сопоставляются с рядами символов по порядку, клавиши — по месту слева.
+     */
+    fun holdSymbols(letterRows: List<KeyRow>, symbolRows: List<KeyRow>): Map<KeyModel, String> {
+        val letters = letterRows.filter { r -> r.heightWeight >= 1f && r.keys.none { it.type == KeyType.SPACE } }
+            .map { r -> r.keys.filter { it.type == KeyType.CHARACTER } }
+        val symbols = symbolRows.filter { r -> r.keys.none { it.type == KeyType.SPACE } }
+            .map { r -> r.keys.filter { it.type == KeyType.CHARACTER }.map { it.text(false) } }
+        val out = HashMap<KeyModel, String>()
+        letters.forEachIndexed { ri, row ->
+            val sym = symbols.getOrNull(ri)?.takeIf { it.isNotEmpty() } ?: return@forEachIndexed
+            // по месту слева направо, как в Gboard: й→1 … з→0; лишним буквам ряда символа нет — у них обычные варианты
+            row.forEachIndexed { ci, k -> sym.getOrNull(ci)?.let { out[k] = it } }
+        }
+        return out
     }
 
     fun layoutId(lang: KeyboardLanguage, page: Int): String = when (page) {
@@ -551,7 +620,7 @@ object GifCatalog {
         }
         try {
             val code = conn.responseCode
-            val body = (if (code in 200..299) conn.inputStream else conn.errorStream)?.bufferedReader()?.use { it.readText() }.orEmpty()
+            val body = (if (code in 200..299) conn.inputStream else conn.errorStream)?.readLimited().orEmpty()
             if (code !in 200..299) throw IllegalStateException("HTTP $code")
             return JSONObject(body)
         } finally {
@@ -614,17 +683,38 @@ object Translator {
      * Перевод через несколько бесплатных адресов по очереди: основной адрес Google у части операторов
      * и в части стран недоступен или отвечает ошибкой на частые запросы — тогда пробуем следующий.
      */
-    suspend fun translate(text: String, from: String, to: String): Result<String> = withContext(Dispatchers.IO) {
+    suspend fun translate(text: String, from: String, to: String, hints: List<String> = emptyList()): Result<String> = withContext(Dispatchers.IO) {
         val clean = text.trim()
         if (clean.isEmpty()) return@withContext Result.success("")
+        val src = if (from == "auto") guessSource(clean, to, hints) else from
         var last: Throwable? = null
         for (attempt in listOf(::viaGtx, ::viaDictExt, ::viaMyMemory)) {
-            val r = runCatching { attempt(clean, from, to) }
+            val r = runCatching { attempt(clean, src, to) }
             val out = r.getOrNull()?.trim()
             if (!out.isNullOrEmpty()) return@withContext Result.success(out)
             last = r.exceptionOrNull() ?: last
         }
         Result.failure(last ?: java.io.IOException("empty translation"))
+    }
+
+    private val CYRILLIC_LANGS = setOf("ru", "uk", "be", "bg", "sr", "mk", "kk", "ky", "tg", "tt", "ba", "mn")
+
+    /**
+     * Язык текста угадываем сами, если по буквам он ясен: короткое слово Google определяет наугад — «попа»
+     * уходила как болгарское («священника») и переводилась как «pop». Кириллица — это язык раскладки
+     * пользователя (из hints), а не любой кириллический язык мира. Не уверены — пусть решает сервис ("auto").
+     */
+    private fun guessSource(text: String, to: String, hints: List<String>): String {
+        val guess = when {
+            text.any { it in 'Ѐ'..'ӿ' } -> when {
+                text.any { it in "іїєґІЇЄҐ" } -> "uk"
+                text.any { it in "ўЎ" } -> "be"
+                else -> hints.firstOrNull { it in CYRILLIC_LANGS && it != "uk" && it != "be" } ?: "ru"
+            }
+            else -> return "auto"
+        }
+        // переводим на тот же язык — значит, текст скорее на другом; пусть определяет сервис
+        return if (guess == to) "auto" else guess
     }
 
     private fun open(url: String): HttpURLConnection = (URL(url).openConnection() as HttpURLConnection).apply {
@@ -635,7 +725,7 @@ object Translator {
 
     private fun HttpURLConnection.body(): String = try {
         if (responseCode !in 200..299) throw java.io.IOException("HTTP $responseCode")
-        inputStream.bufferedReader().use { it.readText() }
+        inputStream.readLimited()
     } finally {
         disconnect()
     }

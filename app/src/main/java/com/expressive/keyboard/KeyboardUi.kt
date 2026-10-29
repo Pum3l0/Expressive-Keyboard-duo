@@ -1,7 +1,8 @@
 @file:OptIn(
     androidx.compose.material3.ExperimentalMaterial3Api::class,
     androidx.compose.foundation.ExperimentalFoundationApi::class,
-    androidx.compose.ui.text.ExperimentalTextApi::class
+    androidx.compose.ui.text.ExperimentalTextApi::class,
+    androidx.compose.ui.ExperimentalComposeUiApi::class
 )
 
 package com.expressive.keyboard
@@ -116,6 +117,7 @@ import coil.compose.AsyncImage
 import coil.decode.GifDecoder
 import coil.decode.ImageDecoderDecoder
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
@@ -134,6 +136,7 @@ import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.cos
+import kotlin.math.floor
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
@@ -212,7 +215,14 @@ fun rememberBackgroundBitmap(version: Long): ImageBitmap? {
         value = if (version == 0L) null else withContext(Dispatchers.IO) {
             runCatching {
                 val f = File(context.filesDir, KeyboardPrefs.BG_IMAGE_FILENAME)
-                if (f.exists()) android.graphics.BitmapFactory.decodeFile(f.absolutePath)?.asImageBitmap() else null
+                if (!f.exists()) null else {
+                    // файл уже уменьшен при выборе, но на всякий случай — не больше ~2000 px по стороне
+                    val o = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                    android.graphics.BitmapFactory.decodeFile(f.absolutePath, o)
+                    var sample = 1
+                    while (maxOf(o.outWidth, o.outHeight) / sample > 2048) sample *= 2
+                    android.graphics.BitmapFactory.decodeFile(f.absolutePath, android.graphics.BitmapFactory.Options().apply { inSampleSize = sample })?.asImageBitmap()
+                }
             }.getOrNull()
         }
     }
@@ -324,6 +334,19 @@ data class PopupState(
     val expanded: Boolean
 )
 
+/**
+ * Где стоят варианты буквы: левый край ряда и шаг ячейки (в пикселях слоя клавиатуры). Одно и то же и для
+ * рисования, и для выбора пальцем: раньше выбор шёл шагами 44dp от места касания, а ряд прижимался к краю экрана
+ * ячейками по 50dp — у крайних клавиш («a», «p») часть вариантов была недосягаема.
+ */
+internal fun popupRow(n: Int, anchorX: Float, layerWidth: Float, density: Float): Pair<Float, Float> {
+    val margin = 4f * density
+    val slot = min(50f * density, (layerWidth - 2f * margin) / max(1, n))
+    val width = n * slot
+    val left = (anchorX - width / 2f).coerceIn(margin, max(margin, layerWidth - width - margin))
+    return left to slot
+}
+
 /** Состояние всплывашки читает ТОЛЬКО слой всплывашки — клавиатура при нажатии не перекомпонуется. */
 @Stable
 class PopupController {
@@ -387,16 +410,36 @@ internal fun KeyView(
     glideEnabled: Boolean,
     numberRow: Boolean,
     modifier: Modifier,
-    hSpace: Dp = 0.dp
+    /** Символ по удержанию в режиме «как в Gboard» (null — обычные варианты). */
+    holdSymbol: String? = null,
+    /** Промежутки между клавишами (по горизонтали и между рядами): касание в половине промежутка — тоже эта клавиша. */
+    gapX: Dp = 0.dp,
+    gapY: Dp = 0.dp
 ) {
     val pluginState = PluginRepository.active
-    val variants = remember(key, upper, pluginState) { key.variants(upper) }
+    // с рядом цифр цифра под буквой верхнего ряда лишняя — она и так на виду
+    val noDigits = settings.showNumberRow && !numberRow && key.type == KeyType.CHARACTER && key.label.firstOrNull()?.isLetter() == true
+    val hold = holdSymbol?.takeUnless { noDigits && it.length == 1 && it[0].isDigit() }
+    val variants = remember(key, upper, pluginState, hold, noDigits) {
+        if (hold == null) key.variants(upper).let { v -> if (noDigits) v.filterNot { it.length == 1 && it[0].isDigit() } else v }
+        else {
+            // символ — по умолчанию (в середине), рядом только варианты самой буквы (ё, ъ, буквы с ударением)
+            val letters = key.variants(upper).filter { v -> v.length == 1 && v[0].isLetter() && !v.equals(key.label, ignoreCase = true) }
+            val mid = (letters.size + 1) / 2
+            letters.take(mid) + hold + letters.drop(mid)
+        }
+    }
     val output = remember(key, upper) { key.text(upper) }
     val holder = remember { CoordsHolder() }
-    val anim = remember { Animatable(0f) }
+    // область касания: клавиша вместе с половинами промежутков вокруг (раньше касание между клавишами терялось)
+    val cell = remember { CoordsHolder() }
+    val gx = with(LocalDensity.current) { gapX.roundToPx() }
+    val gy = with(LocalDensity.current) { gapY.roundToPx() }
+    // анимация считается законченной чуть раньше (порог 0.03): меньше кадров на каждое нажатие
+    val anim = remember { Animatable(0f, 0.03f) }
     // внешний вид клавиши перерисовывается только при заметном изменении нажатия: «желейные» колебания после
     // отпускания двигают лишь масштаб слоя (дёшево), а не перерисовывают стекло и тени каждый кадр
-    val drawP by remember { derivedStateOf { (anim.value.coerceIn(0f, 1f) * 24f).roundToInt() / 24f } }
+    val drawP by remember { derivedStateOf { (anim.value.coerceIn(0f, 1f) * 8f).roundToInt() / 8f } }
     var pressed by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val skin = LocalSkin.current
@@ -414,7 +457,7 @@ internal fun KeyView(
     }
     val skinCache = remember { SkinKeyCache() }
     val isChar = key.type == KeyType.CHARACTER
-    val upHint = if (isChar) remember(label, variants) { hintFor(label, variants) } else null
+    val upHint = if (isChar) remember(label, variants, hold) { hold ?: hintFor(label, variants) } else null
     val cKey by rememberUpdatedState(key)
     val cLabel by rememberUpdatedState(label)
     val cOutput by rememberUpdatedState(output)
@@ -422,15 +465,21 @@ internal fun KeyView(
     val cSettings by rememberUpdatedState(settings)
     val cActions by rememberUpdatedState(actions)
     val cGlide by rememberUpdatedState(glideEnabled)
+    val cShift by rememberUpdatedState(shift)
     val cUpHint by rememberUpdatedState(upHint)
+    val cGx by rememberUpdatedState(gx)
+    val cGy by rememberUpdatedState(gy)
     val fr = shapeFractions(key.type)
     val capPx = with(LocalDensity.current) { settings.cornerRadiusDp.dp.toPx() }
     val border = settings.showKeyBorders
     val borderColor = palette.outline
-    val press = settings.pressAnimation
-    val effect = style?.press ?: PressEffect.SCALE
-    val cEffect by rememberUpdatedState(effect)
-    val pressScale = style?.pressScale
+    // в энергосбережении (и с включённой экономией заряда) клавиши не анимируются: только смена цвета
+    val press = if (settings.ecoMode && PowerState.saver) 0f else settings.pressAnimation
+    // анимация нажатия: выбранная в настройках «Анимации» или из темы
+    val pressAnim = remember(settings.animPress, settings.customAnims, style?.press, style?.pressScale) { Anims.forKey(settings, style) }
+    val cPressAnim by rememberUpdatedState(pressAnim)
+    val speed2 = settings.animSpeed * settings.animSpeed
+    val cSpeed2 by rememberUpdatedState(speed2)
     val weight = LocalKeyWeight.current
     val hint = if (isChar && settings.showHints && !numberRow && style?.hideHint != true) upHint else null
 
@@ -465,67 +514,24 @@ internal fun KeyView(
         return Offset(p.x + k.size.width / 2f, p.y)
     }
 
+    /** Левый верхний угол области касания в координатах клавиатуры. */
     fun origin(): Offset? {
-        val k = holder.coords ?: return null
+        val k = cell.coords ?: return null
         val l = layer.coords ?: return null
         return l.safePositionOf(k)
     }
 
     Box(
         modifier = modifier
-            .onGloballyPositioned { holder.coords = it }
-            .padding(horizontal = hSpace / 2)
-            .graphicsLayer {
-                when (effect) {
-                    PressEffect.SCALE -> {
-                        val s = 1f - (1f - (pressScale ?: 0.95f)) * press * anim.value.coerceIn(0f, 1.2f)
-                        scaleX = s
-                        scaleY = s
-                    }
-                    PressEffect.JELLY -> {
-                        val a = press * anim.value.coerceIn(-0.6f, 1.3f)
-                        scaleX = 1f + 0.08f * a
-                        scaleY = 1f - 0.08f * a
-                    }
-                    PressEffect.BOUNCE -> {
-                        val s = 1f + ((pressScale ?: 1.08f) - 1f) * press * anim.value.coerceIn(-0.3f, 1.3f)
-                        scaleX = s
-                        scaleY = s
-                    }
-                    PressEffect.SINK -> {
-                        val a = press * anim.value.coerceIn(0f, 1.2f)
-                        translationY = 2.5.dp.toPx() * a
-                        scaleX = 1f - 0.02f * a
-                        scaleY = 1f - 0.02f * a
-                    }
-                    PressEffect.NONE -> Unit
+            .layout { m, c ->
+                if (!c.hasBoundedWidth || !c.hasBoundedHeight || (gx == 0 && gy == 0)) {
+                    val pl = m.measure(c)
+                    return@layout layout(pl.width, pl.height) { pl.place(0, 0) }
                 }
+                val pl = m.measure(Constraints.fixed(c.maxWidth + gx, c.maxHeight + gy))
+                layout(c.maxWidth, c.maxHeight) { pl.place(-gx / 2, -gy / 2) }
             }
-            // тени и свечение — снаружи кэшируемого слоя (иначе обрежутся по краю клавиши)
-            .drawBehind {
-                val st = style ?: return@drawBehind
-                val m = min(size.width, size.height)
-                var rest = fr.first * m
-                if (isChar) rest = min(rest, capPx)
-                drawSkinKey(st, colors, drawP, rest, fr.second * m, skinCache, backdrop, SKIN_SHADOW) { keyPosIn(holder, backdrop) }
-            }
-            // сама клавиша оформления — в отдельном слое-текстуре: неизменившиеся клавиши не перерисовываются каждый кадр
-            .then(if (style != null) Modifier.graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen } else Modifier)
-            .drawBehind {
-                val p = drawP
-                val m = min(size.width, size.height)
-                var rest = fr.first * m
-                if (isChar) rest = min(rest, capPx)
-                val st = style
-                if (st != null) {
-                    drawSkinKey(st, colors, p, rest, fr.second * m, skinCache, backdrop, SKIN_BODY) { keyPosIn(holder, backdrop) }
-                } else {
-                    val r = lerpF(rest, fr.second * m, p)
-                    val cr = CornerRadius(r, r)
-                    drawRoundRect(color = lerp(colors.bg, colors.activeBg, p), cornerRadius = cr)
-                    if (border) drawRoundRect(color = borderColor, cornerRadius = cr, style = Stroke(1.dp.toPx()))
-                }
-            }
+            .onGloballyPositioned { cell.coords = it }
             .pointerInput(Unit) {
                 val slop = 12.dp.toPx()
                 val step = 44.dp.toPx()
@@ -538,13 +544,28 @@ internal fun KeyView(
                     val id = down.id
                     val k = cKey
                     val act = cActions
-                    val fx = (down.position.x / size.width - 0.5f).coerceIn(-0.5f, 0.5f)
-                    val fy = (down.position.y / size.height - 0.5f).coerceIn(-0.5f, 0.5f)
-                    act.keyTouch(fx, fy)
-                    pressed = true
-                    if (cSettings.pressAnimation <= 0f) scope.launch { anim.snapTo(1f) }
-                    else scope.launch { anim.animateTo(1f, spring(dampingRatio = 0.85f, stiffness = 1800f)) }
+                    // сначала отклик (вибрация, звук), потом всё остальное
                     act.keyDown(k)
+                    pressed = true
+                    // размер самой клавиши — без половин промежутков вокруг
+                    val inset = Offset(cGx / 2f, cGy / 2f)
+                    val iw = max(1f, size.width - cGx.toFloat())
+                    val ih = max(1f, size.height - cGy.toFloat())
+                    skinCache.touch = down.position - inset
+                    // клавиша гаснет досрочно: палец уже жмёт следующую
+                    val releaseEarly = {
+                        pressed = false
+                        popup.clear(holder)
+                        scope.launch { anim.animateTo(0f, spring(dampingRatio = 1f, stiffness = 1500f * cSpeed2)) }
+                    }
+                    // Shift и ⌫ не «перекатываются», но нажатая до них буква срабатывает раньше них
+                    if (k.type == KeyType.SHIFT || k.type == KeyType.BACKSPACE) Rollover.press(holder, null)
+                    // нажатие видно в ближайшем же кадре: без запуска корутины «на потом» и без разгона пружины с нуля
+                    if (cSettings.pressAnimation <= 0f || (cSettings.ecoMode && PowerState.saver)) scope.launch(start = CoroutineStart.UNDISPATCHED) { anim.snapTo(1f) }
+                    else scope.launch(start = CoroutineStart.UNDISPATCHED) {
+                        anim.snapTo(max(anim.value, 0.6f))
+                        anim.animateTo(1f, spring(dampingRatio = 1f, stiffness = 4000f * cSpeed2))
+                    }
                     try {
                         when (k.type) {
                             KeyType.BACKSPACE -> {
@@ -552,41 +573,71 @@ internal fun KeyView(
                                 var deadline = SystemClock.uptimeMillis() + 420L
                                 var wordMode = false
                                 var lastX = down.position.x
+                                // свайп влево сначала выделяет слова (вправо — отпускает их обратно), а стирает
+                                // только по отпусканию: случайный мазок больше не съедает текст
+                                var words = 0
+                                var released = false
+                                try {
+                                    while (true) {
+                                        val left = deadline - SystemClock.uptimeMillis()
+                                        val ev = if (left > 0) withTimeoutOrNull(left) { awaitPointerEvent() } else null
+                                        if (ev == null) {
+                                            if (!wordMode) {
+                                                act.keyTick()
+                                                act.commitKey(k, "")
+                                            }
+                                            deadline = SystemClock.uptimeMillis() + 55L
+                                            continue
+                                        }
+                                        val ch = ev.changes.firstOrNull { it.id == id } ?: break
+                                        if (!ch.pressed) {
+                                            released = true
+                                            break
+                                        }
+                                        if (!wordMode && cSettings.backspaceSwipe && down.position.x - ch.position.x > slop * 2) {
+                                            wordMode = true
+                                            lastX = ch.position.x
+                                            words = 1
+                                            act.keyTick()
+                                            act.backspaceSelect(words)
+                                        }
+                                        if (wordMode) {
+                                            val n = floor((lastX - ch.position.x) / wordStep + 1f).toInt().coerceAtLeast(0)
+                                            if (n != words) {
+                                                words = n
+                                                act.keyTick()
+                                                act.backspaceSelect(words)
+                                            }
+                                            deadline = Long.MAX_VALUE
+                                        }
+                                    }
+                                } finally {
+                                    if (wordMode) act.backspaceSelectDone(released && words > 0)
+                                }
+                            }
+                            KeyType.SHIFT -> {
+                                // Shift — в момент касания, как в Gboard: при быстром наборе палец уже жмёт букву,
+                                // пока Shift ещё не отпущен, и раньше заглавная терялась
+                                act.commitKey(k, cOutput)
                                 while (true) {
-                                    val left = deadline - SystemClock.uptimeMillis()
-                                    val ev = if (left > 0) withTimeoutOrNull(left) { awaitPointerEvent() } else null
-                                    if (ev == null) {
-                                        if (!wordMode) {
-                                            act.keyTick()
-                                            act.commitKey(k, "")
-                                        }
-                                        deadline = SystemClock.uptimeMillis() + 55L
-                                        continue
-                                    }
-                                    val ch = ev.changes.firstOrNull { it.id == id } ?: break
+                                    val ch = awaitPointerEvent().changes.firstOrNull { it.id == id } ?: break
                                     if (!ch.pressed) break
-                                    if (!wordMode && cSettings.backspaceSwipe && down.position.x - ch.position.x > slop * 2) {
-                                        wordMode = true
-                                        lastX = ch.position.x
-                                        act.keyTick()
-                                        act.commitKey(k, DELETE_WORD)
-                                    }
-                                    if (wordMode) {
-                                        while (lastX - ch.position.x > wordStep) {
-                                            lastX -= wordStep
-                                            act.keyTick()
-                                            act.commitKey(k, DELETE_WORD)
-                                        }
-                                        deadline = Long.MAX_VALUE
-                                    }
                                 }
                             }
                             KeyType.SPACE -> {
                                 val mode = cSettings.spaceSwipe
                                 var swiped = false
                                 var picker = false
+                                var rolled = false
                                 var lastX = down.position.x
                                 var lastY = down.position.y
+                                Rollover.press(holder) {
+                                    if (!swiped && !picker && !rolled) {
+                                        rolled = true
+                                        act.commitKey(k, " ")
+                                        releaseEarly()
+                                    }
+                                }
                                 // удержание пробела без движения — выбор клавиатуры
                                 val lpAt = if (cSettings.spaceLongAction != "OFF") SystemClock.uptimeMillis() + 550L else Long.MAX_VALUE
                                 while (true) {
@@ -596,17 +647,19 @@ internal fun KeyView(
                                         if (left > 0) withTimeoutOrNull(left) { awaitPointerEvent() } else null
                                     } else awaitPointerEvent()
                                     if (ev == null) {
+                                        if (rolled) continue
                                         picker = true
+                                        Rollover.done(holder)
                                         act.keyTick()
                                         act.spaceHold()
                                         continue
                                     }
                                     val ch = ev.changes.firstOrNull { it.id == id } ?: break
                                     if (!ch.pressed) {
-                                        if (!swiped && !picker) act.commitKey(k, " ")
+                                        if (!swiped && !picker && !rolled) act.commitKey(k, " ")
                                         break
                                     }
-                                    if (picker) continue
+                                    if (picker || rolled) continue
                                     val dx = ch.position.x - down.position.x
                                     val dy = ch.position.y - down.position.y
                                     if (!swiped && dy < -swipe) {
@@ -625,11 +678,13 @@ internal fun KeyView(
                                     when (mode) {
                                         "LANGUAGE" -> if (!swiped && abs(dx) > swipe) {
                                             swiped = true
+                                            Rollover.done(holder)
                                             act.swipeSpace(if (dx > 0) 1 else -1)
                                         }
                                         "CURSOR" -> {
                                             if (!swiped && (abs(dx) > slop || abs(dy) > slop)) {
                                                 swiped = true
+                                                Rollover.done(holder)
                                                 lastX = ch.position.x
                                                 lastY = ch.position.y
                                             }
@@ -666,25 +721,58 @@ internal fun KeyView(
                                 val instant = letterKey && cSettings.instantInput && out.length in 1..2 && out.all { it.isLetterOrDigit() }
                                 val upSymbol = if (letterKey && cSettings.swipeUpHint) cUpHint else null
                                 val a0 = anchor()
-                                if (letterKey && cSettings.keyPreview && a0 != null) {
-                                    popup.show(PopupState(holder, a0.x, a0.y, lbl, vars, 0, false))
-                                }
                                 // точка касания внутри клавиши (-0.5…0.5) — автоисправление учитывает, куда попал палец
-                                val touchX = down.position.x / size.width - 0.5f
-                                val touchY = down.position.y / size.height - 0.5f
+                                var touchX = (down.position.x - inset.x) / iw - 0.5f
+                                var touchY = (down.position.y - inset.y) / ih - 0.5f
+                                // динамические зоны: у границы клавиш — буква, с которой слово вероятнее продолжится
+                                var tapOut = out
+                                var shownLabel = lbl
+                                var shownAnchor = a0
+                                if (letterKey && cSettings.dynamicZones && out == lbl && lbl.length == 1 && lbl[0].isLetter()) {
+                                    val o0 = origin()
+                                    val lc = layer.coords
+                                    val hit = if (o0 != null && lc != null) DynamicZones.resolve(lbl[0].lowercaseChar(), o0 + down.position, glide, lc) else null
+                                    if (hit != null) {
+                                        tapOut = if (lbl[0].isUpperCase()) hit.label.uppercase() else hit.label.toString()
+                                        shownLabel = tapOut
+                                        shownAnchor = Offset(hit.center.x, hit.center.y - ih / 2f)
+                                        touchX = hit.touch.dx
+                                        touchY = hit.touch.dy
+                                    }
+                                }
+                                if (letterKey && cSettings.keyPreview && shownAnchor != null) {
+                                    popup.show(PopupState(holder, shownAnchor.x, shownAnchor.y, shownLabel, if (shownLabel == lbl) vars else listOf(shownLabel), 0, false))
+                                }
                                 if (instant) {
                                     act.keyTouch(touchX, touchY)
-                                    act.commitKey(k, out)
+                                    act.commitKey(k, tapOut)
                                 }
-                                val glideStart = max(slop * 1.5f, size.width * 0.6f)
-                                val upDist = size.height * 0.45f
+                                var rolled = false
+                                Rollover.press(holder) {
+                                    if (!rolled) {
+                                        rolled = true
+                                        if (!instant) {
+                                            act.keyTouch(touchX, touchY)
+                                            act.commitKey(k, tapOut)
+                                        }
+                                        releaseEarly()
+                                    }
+                                }
+                                val glideStart = max(slop * 1.5f, iw * 0.75f)
+                                val upDist = ih * 0.45f
                                 // удержание кнопки языка может делать своё действие (настройка), а не открывать список языков
                                 val globeAction = k.type == KeyType.GLOBE && cSettings.globeLongPress != "LANGUAGES"
-                                val holdAt = if ((vars.size > 1 && !globeAction) || (globeAction && cSettings.globeLongPress != "OFF")) {
+                                val holdable = vars.size > 1 || (vars.size == 1 && vars[0] != out)
+                                val holdAt = if ((holdable && !globeAction) || (globeAction && cSettings.globeLongPress != "OFF")) {
                                     SystemClock.uptimeMillis() + cSettings.longPressMs.toLong()
                                 } else Long.MAX_VALUE
                                 var gesture = KeyGesture.CANCELED
                                 var last = down.position
+                                // куда «перепрыгнул» палец: на старых экранах отпускание пальца иногда теряется, и
+                                // следующее нажатие приходит тем же касанием — скачком через клавиатуру. Это два
+                                // нажатия, а не росчерк: раньше из него угадывалось слово, и «При» становилось
+                                // «При Привет»
+                                var jumpTo: Offset? = null
                                 while (true) {
                                     val ev = if (holdAt == Long.MAX_VALUE) awaitPointerEvent() else {
                                         val left = holdAt - SystemClock.uptimeMillis()
@@ -696,7 +784,27 @@ internal fun KeyView(
                                     }
                                     val ch = ev.changes.firstOrNull { it.id == id } ?: break
                                     val d = ch.position - down.position
+                                    val prev = last
                                     last = ch.position
+                                    if (letterKey && !rolled && ch.pressed && (prev - down.position).getDistance() < glideStart) {
+                                        var from = prev
+                                        var jump = 0f
+                                        for (h in ch.historical) {
+                                            jump = max(jump, (h.position - from).getDistance())
+                                            from = h.position
+                                        }
+                                        jump = max(jump, (ch.position - from).getDistance())
+                                        if (jump > iw * 1.3f) {
+                                            jumpTo = ch.position
+                                            gesture = KeyGesture.RELEASED
+                                            break
+                                        }
+                                    }
+                                    // клавишу уже «перекатили» — она сработала, ждём только отпускания
+                                    if (rolled) {
+                                        if (!ch.pressed) break
+                                        continue
+                                    }
                                     if (!ch.pressed) {
                                         gesture = if (upSymbol != null && d.y < -upDist && abs(d.x) < abs(d.y)) KeyGesture.SWIPE_UP else KeyGesture.RELEASED
                                         break
@@ -710,16 +818,43 @@ internal fun KeyView(
                                         break
                                     }
                                 }
+                                Rollover.done(holder)
+                                if (rolled) {
+                                    // удержание после «перекатывания» не открывает варианты — ждём отпускания
+                                    if (gesture == KeyGesture.HOLD) while (true) {
+                                        val ch = awaitPointerEvent().changes.firstOrNull { it.id == id } ?: break
+                                        if (!ch.pressed) break
+                                    }
+                                    gesture = KeyGesture.CANCELED
+                                }
                                 when (gesture) {
-                                    KeyGesture.RELEASED -> if (!instant) {
-                                        act.keyTouch(touchX, touchY)
-                                        act.commitKey(k, out)
+                                    KeyGesture.RELEASED -> {
+                                        if (!instant) {
+                                            act.keyTouch(touchX, touchY)
+                                            act.commitKey(k, tapOut)
+                                        }
+                                        jumpTo?.let { p ->
+                                            popup.clear(holder)
+                                            val o = origin()
+                                            val next = if (o != null) KeyboardGeometry.charKeyNear(o + p) else null
+                                            if (next != null) {
+                                                act.keyDown(next.key)
+                                                act.keyTouch(0f, 0f)
+                                                act.commitKey(next.key, next.key.text(cShift == ShiftState.CAPS_LOCK))
+                                                next.pulse()
+                                            }
+                                            // второй палец ещё на экране — его движения и отпускание ничего не вводят
+                                            while (true) {
+                                                val c2 = awaitPointerEvent().changes.firstOrNull { it.id == id } ?: break
+                                                if (!c2.pressed) break
+                                            }
+                                        }
                                     }
                                     KeyGesture.CANCELED -> Unit
                                     KeyGesture.SWIPE_UP -> {
-                                        val sym = upSymbol ?: out
+                                        val sym = upSymbol ?: tapOut
                                         act.keyTick()
-                                        if (instant) act.replaceLast(out, sym) else act.commitKey(k, sym)
+                                        if (instant) act.replaceLast(tapOut, sym) else act.commitKey(k, sym)
                                     }
                                     KeyGesture.HOLD, KeyGesture.SLIDE -> if (globeAction) {
                                         act.keyTick()
@@ -735,19 +870,26 @@ internal fun KeyView(
                                         val a = anchor() ?: a0
                                         if (a != null) popup.show(PopupState(holder, a.x, a.y, lbl, vars, sel, true))
                                         act.keyTick()
+                                        // выбор — по ячейке под пальцем: так достаются все варианты, даже когда ряд
+                                        // упёрся в край экрана и стоит не над клавишей
+                                        val row = a?.let { an -> layer.coords?.let { popupRow(vars.size, an.x, it.size.width.toFloat(), density) } }
+                                        var moved = false
                                         while (true) {
                                             val ch = awaitPointerEvent().changes.firstOrNull { it.id == id } ?: break
                                             if (!ch.pressed) {
                                                 val chosen = vars.getOrElse(sel) { out }
                                                 if (instant) {
-                                                    if (chosen != out) act.replaceLast(out, chosen)
+                                                    if (chosen != tapOut) act.replaceLast(tapOut, chosen)
                                                 } else {
                                                     act.commitKey(if (k.type == KeyType.CHARACTER || k.type == KeyType.GLOBE) k else VARIANT_KEY, chosen)
                                                 }
                                                 break
                                             }
-                                            val idx = (def + ((ch.position.x - down.position.x) / step).roundToInt())
-                                                .coerceIn(0, vars.lastIndex)
+                                            if (!moved && abs(ch.position.x - down.position.x) > slop / 2f) moved = true
+                                            val o = origin()
+                                            val idx = if (row != null && o != null) {
+                                                if (!moved) sel else ((o.x + ch.position.x - row.first) / row.second).toInt().coerceIn(0, vars.lastIndex)
+                                            } else (def + ((ch.position.x - down.position.x) / step).roundToInt()).coerceIn(0, vars.lastIndex)
                                             if (idx != sel) {
                                                 sel = idx
                                                 popup.select(holder, idx)
@@ -757,7 +899,8 @@ internal fun KeyView(
                                     }
                                     KeyGesture.GLIDE -> {
                                         popup.clear(holder)
-                                        if (instant) act.replaceLast(out, "")
+                                        // буква мгновенного ввода остаётся, пока не ясно, что это слово свайпом:
+                                        // раньше она стиралась в начале свайпа — буквы пропадали и появлялись
                                         val o = origin() ?: Offset.Zero
                                         glide.trail.clear()
                                         glide.trail.add(o + down.position)
@@ -766,6 +909,8 @@ internal fun KeyView(
                                         var released = false
                                         while (true) {
                                             val ch = awaitPointerEvent().changes.firstOrNull { it.id == id } ?: break
+                                            // промежуточные точки между кадрами: без них быстрый росчерк срезал углы
+                                            for (h in ch.historical) glide.trail.add(o + h.position)
                                             glide.trail.add(o + ch.position)
                                             if (!ch.pressed) {
                                                 released = true
@@ -779,11 +924,17 @@ internal fun KeyView(
                                             val net = pts.last() - pts.first()
                                             var len = 0f
                                             for (i in 1 until pts.size) len += (pts[i] - pts[i - 1]).getDistance()
-                                            if (upSymbol != null && net.y < -upDist && abs(net.x) < abs(net.y) * 0.7f && len < size.width * 2.2f) {
-                                                act.commitKey(k, upSymbol)
+                                            if (upSymbol != null && net.y < -upDist && abs(net.x) < abs(net.y) * 0.7f && len < iw * 2.2f) {
+                                                if (instant) act.replaceLast(tapOut, upSymbol) else act.commitKey(k, upSymbol)
+                                            } else if (len < iw * 1.25f) {
+                                                // короткий мазок при быстром наборе — это нажатие, а не слово
+                                                if (!instant) {
+                                                    act.keyTouch(touchX, touchY)
+                                                    act.commitKey(k, tapOut)
+                                                }
                                             } else {
                                                 val snap = layer.coords?.let { glide.snapshot(it) }
-                                                if (snap != null) act.commitGlide(pts, snap.first, snap.second)
+                                                if (snap != null) act.commitGlide(pts, snap.first, snap.second, if (instant) tapOut else null)
                                             }
                                         }
                                     }
@@ -791,33 +942,71 @@ internal fun KeyView(
                             }
                         }
                     } finally {
+                        Rollover.done(holder)
                         pressed = false
                         popup.clear(holder)
                         if (k.type == KeyType.CHARACTER) glide.trail.clear()
                         act.keyUp()
-                        if (cSettings.pressAnimation <= 0f) scope.launch { anim.snapTo(0f) }
-                        else if (cEffect == PressEffect.JELLY) scope.launch { anim.animateTo(0f, spring(dampingRatio = 0.28f, stiffness = 520f)) }
-                        else scope.launch { anim.animateTo(0f, spring(dampingRatio = 0.5f, stiffness = 600f)) }
+                        val pa = cPressAnim
+                        if (cSettings.pressAnimation <= 0f || (cSettings.ecoMode && PowerState.saver)) scope.launch { anim.snapTo(0f) }
+                        else scope.launch { anim.animateTo(0f, spring(dampingRatio = pa.damping, stiffness = pa.stiffness * cSpeed2)) }
                     }
                 }
             },
         contentAlignment = Alignment.Center
     ) {
+    Box(
+        modifier = Modifier.fillMaxSize()
+            .padding(horizontal = gapX / 2, vertical = gapY / 2)
+            .onGloballyPositioned { holder.coords = it }
+            .graphicsLayer { Anims.apply(this, pressAnim, anim.value.coerceIn(-0.6f, 1.3f), press) }
+            // тени и свечение — снаружи кэшируемого слоя (иначе обрежутся по краю клавиши)
+            .drawBehind {
+                val st = style ?: return@drawBehind
+                val m = min(size.width, size.height)
+                var rest = fr.first * m
+                if (isChar) rest = min(rest, capPx)
+                drawSkinKey(st, colors, drawP, rest, fr.second * m, skinCache, backdrop, SKIN_SHADOW) { keyPosIn(holder, backdrop) }
+            }
+            // сама клавиша оформления — в отдельном слое-текстуре: неизменившиеся клавиши не перерисовываются каждый кадр
+            .then(if (style != null) Modifier.graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen } else Modifier)
+            .drawBehind {
+                val p = drawP
+                val m = min(size.width, size.height)
+                var rest = fr.first * m
+                if (isChar) rest = min(rest, capPx)
+                val st = style
+                if (st != null) {
+                    drawSkinKey(st, colors, p, rest, fr.second * m, skinCache, backdrop, SKIN_BODY) { keyPosIn(holder, backdrop) }
+                } else {
+                    val r = lerpF(rest, fr.second * m, p)
+                    val cr = CornerRadius(r, r)
+                    drawRoundRect(color = lerp(colors.bg, colors.activeBg, p), cornerRadius = cr)
+                    if (border) drawRoundRect(color = borderColor, cornerRadius = cr, style = Stroke(1.dp.toPx()))
+                }
+            },
+        contentAlignment = Alignment.Center
+    ) {
         val st = style
-        val fg = if (pressed) st?.pressedText ?: st?.text ?: colors.activeFg else st?.text ?: colors.fg
+        val fg = pressedLabelColor(st, colors, pressed)
         val scale = st?.fontScale ?: 1f
         val custom = st?.label
-        val textStyle = remember(st) {
+        val dens = LocalDensity.current.density
+        val textStyle = remember(st, dens) {
             TextStyle(
                 fontStyle = if (st?.italic == true) FontStyle.Italic else null,
-                shadow = st?.textGlow?.let { Shadow(it, Offset.Zero, 18f) }
+                // жёсткая тень без размытия (Minecraft) или мягкое свечение
+                shadow = st?.textShadow?.takeIf { it.alpha > 0.01f }?.let { Shadow(it, Offset(1.6f * dens, 1.6f * dens), 0f) }
+                    ?: st?.textGlow?.let { Shadow(it, Offset.Zero, 18f) }
             )
         }
         val w = st?.fontWeight?.let { FontWeight(it) } ?: weight
+        // буквы из точек, как на точечной матрице: текст рисуется в слой и вырезается сеткой точек
+        val labelFx = if (st?.labelEffect == LabelEffect.DOTS) Modifier.dotMatrix() else Modifier
         when {
             custom != null && key.type != KeyType.CHARACTER -> Text(
                 custom, color = fg, fontFamily = font, fontWeight = w, fontSize = (16f * scale).sp, maxLines = 1,
-                softWrap = false, style = textStyle
+                softWrap = false, style = textStyle, modifier = labelFx
             )
             key.type == KeyType.SHIFT -> if (shift == ShiftState.CAPS_LOCK) {
                 SlotIcon("caps", fg, (22f * scale).dp) { GlyphIcon(Glyph.CAPS, fg, (22f * scale).dp) }
@@ -834,7 +1023,7 @@ internal fun KeyView(
             }
             key.type == KeyType.SPACE -> Text(
                 label, color = fg.copy(alpha = 0.72f), fontSize = (13f * scale).sp, fontWeight = w,
-                fontFamily = font, maxLines = 1, style = textStyle
+                fontFamily = font, maxLines = 1, style = textStyle, modifier = labelFx
             )
             key.type == KeyType.SPACER -> Unit
             else -> Text(
@@ -845,38 +1034,69 @@ internal fun KeyView(
                 fontSize = when {
                     key.type == KeyType.MODE_SYMBOLS || key.type == KeyType.SYMBOLS_PAGE -> (15f * scale).sp
                     numberRow -> (17f * settings.keyLabelScale * scale).sp
-                    else -> ((settings.keyHeightDp * 0.4f).coerceIn(18f, 25f) * settings.keyLabelScale * scale).sp
+                    else -> ((settings.keyHeightDp * 0.4f).coerceIn(14f, 25f) * settings.keyLabelScale * scale).sp
                 },
                 maxLines = 1,
                 softWrap = false,
                 textAlign = TextAlign.Center,
-                style = textStyle
+                style = textStyle,
+                modifier = labelFx
             )
         }
         if (hint != null) {
             Text(
                 hint,
-                modifier = Modifier.align(Alignment.TopEnd).padding(top = 3.dp, end = 5.dp),
+                // в самом углу клавиши, как в Gboard: подальше от буквы, чтобы не сливался с ней
+                modifier = Modifier.align(Alignment.TopEnd).padding(top = 1.dp, end = 3.dp),
                 color = fg.copy(alpha = 0.5f),
                 fontFamily = font,
                 fontWeight = FontWeight.Bold,
                 fontSize = 9.sp,
+                lineHeight = 9.sp,
                 maxLines = 1
             )
         }
     }
+    }
 }
+
+/**
+ * Цвет подписи клавиши. Нажатая клавиша темы со своим фоном нажатия сохраняет свой цвет текста: раньше подпись
+ * перекрашивалась в «текст на акценте» (обычно белый), а фон нажатия у многих тем светлый — буква на время
+ * нажатия пропадала (Liquid Glass, Классика, Неоморфизм).
+ */
+internal fun pressedLabelColor(st: KeyStyle?, colors: KeyColors, pressed: Boolean): Color = when {
+    !pressed -> st?.text ?: colors.fg
+    st == null -> colors.activeFg
+    st.pressedText != null -> st.pressedText
+    // фон нажатия задан темой — текст прежний; у контура и «без фона» подсветка полупрозрачная — тоже прежний;
+    // иначе клавиша заливается акцентом, текст под него
+    st.pressedFill != null || st.material == SkinMaterial.OUTLINE || st.material == SkinMaterial.NONE -> st.text ?: colors.fg
+    else -> colors.activeFg
+}
+
+/** Подпись из точек: содержимое рисуется в отдельный слой и остаётся только там, где точки сетки. */
+internal fun Modifier.dotMatrix(cell: Dp = 2.3.dp): Modifier = this
+    .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
+    .drawWithContent {
+        drawContent()
+        drawRect(PatternTiles.dotMask(cell.toPx()), blendMode = BlendMode.DstIn)
+    }
 
 /** Слой всплывающих «печенек»: один Canvas, без shadow/border, не перехватывает касания. */
 @Composable
-internal fun BoxScope.PopupLayer(popup: PopupController, palette: KeyPalette, font: FontFamily, spec: WavySpec) {
+internal fun BoxScope.PopupLayer(popup: PopupController, palette: KeyPalette, font: FontFamily, spec: WavySpec, animStyle: String = "POP", speed: Float = 1f) {
+    // один измеритель текста на все подсказки: не создаётся заново на каждое нажатие
+    val measurer = rememberTextMeasurer(cacheSize = 32)
     val s = popup.state ?: return
-    key(s.owner) { PopupBubbles(s, palette, font, spec) }
+    key(s.owner) { PopupBubbles(s, palette, font, spec, animStyle, speed, measurer) }
 }
 
 @Composable
-internal fun BoxScope.PopupBubbles(s: PopupState, palette: KeyPalette, font: FontFamily, spec: WavySpec) {
-    val measurer = rememberTextMeasurer()
+internal fun BoxScope.PopupBubbles(
+    s: PopupState, palette: KeyPalette, font: FontFamily, spec: WavySpec, animStyle: String = "POP", speed: Float = 1f,
+    measurer: TextMeasurer = rememberTextMeasurer()
+) {
     val skinPopup = LocalSkin.current?.popup
     val glass = skinPopup?.material == SkinMaterial.GLASS
     val baseFill = skinPopup?.fill?.primary ?: if (glass) Color.White.copy(alpha = 0.2f) else palette.accentSoft
@@ -893,21 +1113,65 @@ internal fun BoxScope.PopupBubbles(s: PopupState, palette: KeyPalette, font: Fon
         spring(dampingRatio = 0.7f, stiffness = 700f),
         label = "popupSel"
     )
-    val appear = remember { Animatable(0.5f) }
-    LaunchedEffect(Unit) { appear.animateTo(1f, spring(dampingRatio = 0.55f, stiffness = 800f)) }
+    // появление: пружина, из точки, выезд снизу, проявление или сразу
+    val appear = remember { Animatable(if (animStyle == "NONE") 1f else if (animStyle == "ZOOM") 0.1f else if (animStyle == "POP") 0.5f else 0f) }
+    LaunchedEffect(Unit) {
+        val k = speed * speed
+        when (animStyle) {
+            "NONE" -> Unit
+            "ZOOM" -> appear.animateTo(1f, spring(dampingRatio = 0.6f, stiffness = 1300f * k))
+            "SLIDE", "FADE" -> appear.animateTo(1f, spring(dampingRatio = 1f, stiffness = 1600f * k))
+            else -> appear.animateTo(1f, spring(dampingRatio = 0.65f, stiffness = 1500f * k))
+        }
+    }
     val path = remember { Path() }
-    Canvas(Modifier.matchParentSize()) {
+    val neck = remember { Path() }
+    val keyWidth = ((s.owner as? CoordsHolder)?.coords?.size?.width ?: 0).toFloat()
+    Canvas(Modifier.matchParentSize().graphicsLayer {
+        when (animStyle) {
+            "SLIDE" -> {
+                translationY = (1f - appear.value) * 14.dp.toPx()
+                alpha = appear.value.coerceIn(0f, 1f)
+            }
+            "FADE" -> alpha = appear.value.coerceIn(0f, 1f)
+        }
+    }) {
         val n = layouts.size
-        val slot = 50.dp.toPx()
-        val baseR = 22.dp.toPx()
-        val selR = 29.dp.toPx()
+        val (rowLeft, slot) = popupRow(n, s.anchorX, size.width, density)
+        // много вариантов — ячейки уже, и кружки уменьшаются вместе с ними
+        val fit = (slot / 50.dp.toPx()).coerceAtMost(1f)
+        val baseR = 22.dp.toPx() * fit
+        val selR = 29.dp.toPx() * fit
         val ring = 2.5.dp.toPx()
         val margin = 4.dp.toPx()
         val width = if (n == 1) selR * 2f else n * slot
-        val left = (s.anchorX - width / 2f).coerceIn(margin, max(margin, size.width - width - margin))
+        val left = if (n == 1) (s.anchorX - width / 2f).coerceIn(margin, max(margin, size.width - width - margin)) else rowLeft
         val baseCy = max(s.anchorTop - 4.dp.toPx() - selR, selR + margin)
         val emph = { i: Int -> if (n == 1) 1f else (1f - abs(i - selPos)).coerceIn(0f, 1f) }
-        val sc = appear.value
+        val sc = if (animStyle == "SLIDE" || animStyle == "FADE") 1f else appear.value
+        // жидкое стекло: подсказка «вытекает» из клавиши каплей — перемычка с вогнутыми боками
+        if (glass && n == 1 && keyWidth > 0f) {
+            val r = selR * sc
+            val cx = left + width / 2f
+            val top = baseCy - 4.dp.toPx() + r * 0.55f
+            val bottom = s.anchorTop + 8.dp.toPx()
+            if (bottom > top) {
+                val hwTop = r * 0.62f
+                val hwBot = keyWidth * 0.36f
+                val mid = (top + bottom) / 2f
+                neck.reset()
+                neck.moveTo(cx - hwTop, top)
+                neck.cubicTo(cx - hwTop * 0.45f, mid, s.anchorX - hwBot * 0.55f, mid, s.anchorX - hwBot, bottom)
+                neck.lineTo(s.anchorX + hwBot, bottom)
+                neck.cubicTo(s.anchorX + hwBot * 0.55f, mid, cx + hwTop * 0.45f, mid, cx + hwTop, top)
+                neck.close()
+                drawPath(neck, baseFill)
+                drawPath(neck, Brush.horizontalGradient(
+                    0f to Color.White.copy(alpha = 0.35f), 0.25f to Color.Transparent, 0.75f to Color.Transparent, 1f to Color.White.copy(alpha = 0.25f),
+                    startX = cx - hwTop, endX = cx + hwTop
+                ))
+            }
+        }
         for (i in (0 until n).sortedBy { emph(it) }) {
             val e = emph(i)
             val r = lerpF(baseR, selR, e) * sc
@@ -965,6 +1229,7 @@ internal fun CookieButton(
     color: Color,
     size: Dp,
     onClick: () -> Unit,
+    onLongClick: (() -> Unit)? = null,
     content: @Composable BoxScope.() -> Unit
 ) {
     val interaction = remember { MutableInteractionSource() }
@@ -979,10 +1244,29 @@ internal fun CookieButton(
                 scaleY = scale
             }
             .wavyBackground(spec, color) { rot }
-            .clickable(interactionSource = interaction, indication = null, onClick = onClick),
+            .combinedClickable(interactionSource = interaction, indication = null, onLongClick = onLongClick, onClick = onClick),
         contentAlignment = Alignment.Center,
         content = content
     )
+}
+
+/** Контур по верху клавиатуры: линия вдоль края и скруглений, к бокам гаснет. */
+internal fun DrawScope.drawTopEdge(color: Color, cornerPx: Float) {
+    val w = size.width
+    val stroke = 1.dp.toPx()
+    val half = stroke / 2f
+    val r = cornerPx.coerceIn(0f, min(w / 2f, size.height))
+    val tail = r + 18.dp.toPx()
+    val path = Path().apply {
+        moveTo(half, min(size.height, tail))
+        lineTo(half, r)
+        if (r > 0f) arcTo(Rect(half, half, 2 * r - half, 2 * r - half), 180f, 90f, false)
+        lineTo(w - r, half)
+        if (r > 0f) arcTo(Rect(w - 2 * r + half, half, w - half, 2 * r - half), 270f, 90f, false)
+        lineTo(w - half, min(size.height, tail))
+    }
+    val brush = Brush.verticalGradient(0f to color, (r / tail).coerceIn(0f, 1f) to color.copy(alpha = color.alpha * 0.6f), 1f to Color.Transparent, endY = tail)
+    drawPath(path, brush, style = Stroke(stroke))
 }
 
 /** Окно клавиатуры больше самой клавиатуры — размытие окна вышло бы за её края. */
@@ -1049,6 +1333,7 @@ internal fun SkinButton(
     palette: KeyPalette,
     size: Dp,
     onClick: () -> Unit,
+    onLongClick: (() -> Unit)? = null,
     content: @Composable BoxScope.() -> Unit
 ) {
     val interaction = remember { MutableInteractionSource() }
@@ -1070,11 +1355,14 @@ internal fun SkinButton(
                 scaleY = s
             }
             .drawBehind { drawSkinKey(st, base, p, size.toPx() / 2f, size.toPx() / 2f, cache, backdrop) { keyPosIn(holder, backdrop) } }
-            .clickable(interactionSource = interaction, indication = null, onClick = onClick),
+            .combinedClickable(interactionSource = interaction, indication = null, onLongClick = onLongClick, onClick = onClick),
         contentAlignment = Alignment.Center,
         content = content
     )
 }
+
+/** Что сейчас в строке над клавиатурой. */
+internal enum class HeaderMode { TOOLS, CANDIDATES, INLINE, OFFER, SUGGESTIONS }
 
 @Composable
 internal fun HeaderBar(
@@ -1096,21 +1384,24 @@ internal fun HeaderBar(
     // только что скопированное — предложить вставить, даже если подсказки выключены
     val offer = state.clipOffer.takeIf { inline == null && panel == ActivePanel.KEYBOARD && !state.toolbarOpen && !showCandidates }
     // пустое поле — меню функций вместо подсказок
+    // в переводчике — подсказки для набираемого там слова
+    val translating = panel == ActivePanel.TRANSLATE && settings.showSuggestions
     val tools = !showCandidates && offer == null && inline == null &&
-        (state.toolbarOpen || panel != ActivePanel.KEYBOARD || !settings.showSuggestions || (state.fieldEmpty && !state.toolsDismissed))
+        (state.toolbarOpen || (!translating && (panel != ActivePanel.KEYBOARD || !settings.showSuggestions || (state.fieldEmpty && !state.toolsDismissed))))
     val button = if (settings.landscape) 38.dp else 46.dp
     val skinButtons = LocalSkin.current?.buttons
     val btnFg = skinButtons?.let { it.text ?: palette.onFunc } ?: palette.onAccent
     val headerButton: @Composable (() -> Unit, @Composable BoxScope.() -> Unit) -> Unit = { onClick, content ->
-        if (skinButtons != null) SkinButton(skinButtons, palette, button, onClick, content)
-        else CookieButton(spec, palette.accent, button, onClick, content)
+        if (skinButtons != null) SkinButton(skinButtons, palette, button, onClick, content = content)
+        else CookieButton(spec, palette.accent, button, onClick, content = content)
     }
     Row(
         modifier = Modifier.fillMaxWidth().height(if (settings.landscape) 40.dp else 48.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(6.dp)
     ) {
-        headerButton({ actions.headerMenu() }) {
+        // кнопку панели функций можно убрать; «назад» в панелях остаётся всегда
+        if (panel != ActivePanel.KEYBOARD || settings.toolsButton) headerButton({ actions.headerMenu() }) {
             if (panel != ActivePanel.KEYBOARD) {
                 SlotIcon("back", btnFg, 22.dp) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, null, tint = btnFg, modifier = Modifier.size(22.dp)) }
             } else {
@@ -1118,37 +1409,45 @@ internal fun HeaderBar(
             }
         }
         Box(Modifier.weight(1f).fillMaxHeight(), contentAlignment = Alignment.Center) {
-            if (settings.panelAnimations) {
+            val mode = when {
+                tools -> HeaderMode.TOOLS
+                showCandidates -> HeaderMode.CANDIDATES
+                inline != null -> HeaderMode.INLINE
+                offer != null -> HeaderMode.OFFER
+                else -> HeaderMode.SUGGESTIONS
+            }
+            // каждое состояние рисует только своё: раньше уходящая строка на время перехода показывала то же,
+            // что и новая, — две копии поверх друг друга мелькали
+            val content: @Composable (HeaderMode) -> Unit = { m ->
+                when (m) {
+                    HeaderMode.TOOLS -> ToolbarPill(state, actions, settings, palette)
+                    HeaderMode.CANDIDATES -> CandidateStrip(candidates, actions, palette, font)
+                    HeaderMode.INLINE -> inline?.let { InlineSuggestionStrip(it) }
+                    HeaderMode.OFFER -> state.clipOffer?.let { ClipOfferStrip(it, actions, palette, font) }
+                    HeaderMode.SUGGESTIONS -> SuggestionStrip(state, actions, palette, font)
+                }
+            }
+            if (settings.panelAnimations && mode != HeaderMode.INLINE) {
                 AnimatedContent(
-                    targetState = tools to (offer != null || inline != null),
+                    targetState = mode,
                     transitionSpec = {
-                        (fadeIn(tween(140)) + scaleIn(spring(dampingRatio = 0.7f, stiffness = 700f), initialScale = 0.9f)) togetherWith
-                            fadeOut(tween(90))
+                        // окно только появилось — без анимации; иначе короткое проявление
+                        if (state.instantUi) EnterTransition.None togetherWith ExitTransition.None
+                        else fadeIn(tween(120)) togetherWith fadeOut(tween(70))
                     },
                     label = "headerSwap"
-                ) { (showTools, _) ->
-                    when {
-                        showTools -> ToolbarPill(state, actions, settings, palette)
-                        showCandidates -> CandidateStrip(candidates, actions, palette, font)
-                        inline != null -> InlineSuggestionStrip(inline)
-                        offer != null -> ClipOfferStrip(offer, actions, palette, font)
-                        else -> SuggestionStrip(state, actions, palette, font)
-                    }
-                }
-            } else {
-                when {
-                    tools -> ToolbarPill(state, actions, settings, palette)
-                    showCandidates -> CandidateStrip(candidates, actions, palette, font)
-                    inline != null -> InlineSuggestionStrip(inline)
-                    offer != null -> ClipOfferStrip(offer, actions, palette, font)
-                    else -> SuggestionStrip(state, actions, palette, font)
-                }
-            }
+                ) { m -> content(m) }
+            } else content(mode)
         }
         if (settings.showMicButton) {
-            headerButton({ actions.togglePanel(ActivePanel.VOICE) }) {
+            // удержание — Rambler: диктовка без спешки, ИИ убирает «э-э», повторы и оговорки
+            val onMic = { actions.togglePanel(ActivePanel.VOICE) }
+            val onRambler = { actions.rambler() }
+            val mic: @Composable BoxScope.() -> Unit = {
                 SlotIcon("mic", btnFg, 22.dp) { Icon(Icons.Outlined.Mic, null, tint = btnFg, modifier = Modifier.size(22.dp)) }
             }
+            if (skinButtons != null) SkinButton(skinButtons, palette, button, onMic, onRambler, mic)
+            else CookieButton(spec, palette.accent, button, onMic, onRambler, mic)
         }
     }
 }
@@ -1158,7 +1457,8 @@ internal fun SuggestionStrip(state: KeyboardState, actions: KeyboardActions, pal
     val chips = state.suggestions
     val skin = LocalSkin.current
     if (skin?.plainChips == true) {
-        PlainSuggestionStrip(chips, actions, skin.chips?.text ?: palette.onLetter, font)
+        val plainFg = skin.chips?.text ?: palette.onLetter
+        PlainSuggestionStrip(chips, actions, plainFg, font, skin.chips?.pressedText ?: plainFg)
         return
     }
     val chipStyle = skin?.chips
@@ -1420,7 +1720,7 @@ internal fun ClipOfferStrip(entry: String, actions: KeyboardActions, palette: Ke
 
 /** Подсказки как в Gboard и iOS: три слова через тонкие разделители, главное — жирное по центру. */
 @Composable
-internal fun PlainSuggestionStrip(chips: List<SuggestionChipModel>, actions: KeyboardActions, fg: Color, font: FontFamily) {
+internal fun PlainSuggestionStrip(chips: List<SuggestionChipModel>, actions: KeyboardActions, fg: Color, font: FontFamily, primaryFg: Color = fg) {
     Row(Modifier.fillMaxWidth().height(40.dp), verticalAlignment = Alignment.CenterVertically) {
         for (i in 0 until 3) {
             val chip = chips.getOrNull(i) ?: SuggestionChipModel.EMPTY
@@ -1446,7 +1746,7 @@ internal fun PlainSuggestionStrip(chips: List<SuggestionChipModel>, actions: Key
                 if (!chip.isEmpty) {
                     Text(
                         text = chip.displayText,
-                        color = if (primary) fg else fg.copy(alpha = 0.82f),
+                        color = if (primary) primaryFg else fg.copy(alpha = 0.82f),
                         fontFamily = font,
                         fontSize = 16.sp,
                         fontWeight = if (primary) FontWeight.Bold else FontWeight.Normal,
@@ -1562,7 +1862,7 @@ internal fun ToolbarPill(state: KeyboardState, actions: KeyboardActions, setting
         when {
             id == "plugins" -> actions.togglePanel(ActivePanel.PLUGINS)
             id == "translate" -> actions.togglePanel(ActivePanel.TRANSLATE)
-            id == "ai_fix" -> actions.aiFix()
+            id == "ai_fix" -> actions.togglePanel(ActivePanel.AI_WRITE)
             id == "gif" -> actions.togglePanel(ActivePanel.GIF)
             id == "clipboard" -> actions.togglePanel(ActivePanel.CLIPBOARD)
             id == "emoji" -> actions.togglePanel(ActivePanel.EMOJI)
@@ -1658,7 +1958,7 @@ internal fun ToolbarPill(state: KeyboardState, actions: KeyboardActions, setting
                 val selected = when (id) {
                     "plugins" -> state.panel == ActivePanel.PLUGINS
                     "translate" -> state.panel == ActivePanel.TRANSLATE
-                    "ai_fix" -> state.aiBusy
+                    "ai_fix" -> state.aiBusy || state.panel == ActivePanel.AI_WRITE || state.panel == ActivePanel.AI_PROMPT
                     "gif" -> state.panel == ActivePanel.GIF || state.panel == ActivePanel.GIF_SEARCH
                     "clipboard" -> state.panel == ActivePanel.CLIPBOARD
                     "emoji" -> state.panel == ActivePanel.EMOJI || state.panel == ActivePanel.EMOJI_SEARCH
@@ -1749,8 +2049,12 @@ fun KeyboardRoot(
         "LIGHT" -> false
         else -> systemDark
     }
-    val baseSkin = PluginRepository.activeSkin(raw)
-    val skin = remember(baseSkin, dark) { baseSkin?.forMode(dark) }
+    val activePlugins = PluginRepository.active
+    val scriptSkin = ScriptHost.skinOverride
+    // тема с её настройками и в акцентном цвете пользователя; пересчёт — только когда что-то из этого меняется
+    val skin = remember(activePlugins, scriptSkin, raw.skinPlugin, raw.skinOptions, raw.userAccent, raw.colorAccentText, raw.keyOpacity, dark) {
+        PluginRepository.resolvedSkin(raw, dark)
+    }
     val configuration = LocalConfiguration.current
     val posture = FoldPosture.detect(configuration)
     val landscape = configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
@@ -1765,6 +2069,7 @@ fun KeyboardRoot(
         val font = remember(baseFont, skin) { skin?.fontFamily(baseFont) ?: baseFont }
         val image = if (settings.hasBackgroundImage) rememberBackgroundBitmap(settings.bgImageVersion) else null
         val density = LocalDensity.current
+        SideEffect { PatternTiles.density = density.density }
         val backdrop = remember { Backdrop() }
         var rootSize by remember { mutableStateOf(IntSize.Zero) }
         // настоящее стекло: окно клавиатуры размывает приложение под собой (Android 12+, если система разрешает)
@@ -1777,8 +2082,11 @@ fun KeyboardRoot(
         }
         val blurDp = wantBlur?.takeIf { it > 0f && blurSupported && image == null }
         // дымка поверх размытия: у темы своя, иначе — полупрозрачный фон клавиатуры
-        val blurTint = skin?.blurTint ?: palette.background.copy(alpha = if (palette.background.luminance() < 0.5f) 0.62f else 0.55f)
-        val decorated = image != null || skin?.hasBackground == true || blurDp != null
+        val blurTint0 = skin?.blurTint ?: palette.background.copy(alpha = if (palette.background.luminance() < 0.5f) 0.62f else 0.55f)
+        // прозрачный фон: сквозь клавиатуру видно приложение, остаются только клавиши
+        val bgAlpha = 1f - settings.bgTransparency
+        val blurTint = blurTint0.copy(alpha = blurTint0.alpha * bgAlpha)
+        val decorated = image != null || skin?.hasBackground == true || blurDp != null || bgAlpha < 0.99f
         LaunchedEffect(palette.background, decorated) { onBackground(palette.background, decorated) }
         val corner = skin?.corner ?: 28f
         LaunchedEffect(blurDp, blurTint, corner) {
@@ -1800,7 +2108,8 @@ fun KeyboardRoot(
             Surface(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(topStart = (skin?.corner ?: 28f).dp, topEnd = (skin?.corner ?: 28f).dp),
-                color = if (blurDp != null) Color.Transparent else palette.background
+                // при размытии окна фон рисует само окно (дымка поверх размытия)
+                color = if (blurDp != null) Color.Transparent else palette.background.copy(alpha = palette.background.alpha * bgAlpha)
             ) {
                 Box(
                     Modifier.fillMaxWidth().onGloballyPositioned {
@@ -1808,23 +2117,43 @@ fun KeyboardRoot(
                         if (it.size != rootSize) rootSize = it.size
                     }
                 ) {
-                    if (skin != null && skin.hasBackground && blurDp == null) {
-                        Canvas(Modifier.matchParentSize()) { drawSkinBackground(skin, size) }
+                    if (skin != null && skin.hasBackground && blurDp == null && bgAlpha > 0.01f) {
+                        Canvas(Modifier.matchParentSize().graphicsLayer { alpha = bgAlpha }) { drawSkinBackground(skin, size) }
                     }
-                    if (image != null) {
+                    if (image != null && bgAlpha > 0.01f) {
                         val blur = settings.bgBlurDp
                         Image(
                             bitmap = image,
                             contentDescription = null,
                             contentScale = ContentScale.Crop,
+                            alpha = bgAlpha,
                             modifier = Modifier.matchParentSize()
                                 .then(if (blur > 0f && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) Modifier.blur(blur.dp) else Modifier)
                         )
-                        if (settings.bgDim > 0f) Box(Modifier.matchParentSize().background(palette.background.copy(alpha = settings.bgDim)))
+                        if (settings.bgDim > 0f) Box(Modifier.matchParentSize().background(palette.background.copy(alpha = settings.bgDim * bgAlpha)))
                     }
-                    Box(Modifier.fillMaxWidth().navigationBarsPadding().padding(bottom = settings.bottomOffsetDp.dp)) {
+                    // фон — до самых краёв экрана, клавиши — в стороне от выреза камеры, боковой панели навигации
+                    // и скруглённых углов экрана; отступы одинаковые с обеих сторон, иначе в альбомной одна
+                    // половина упиралась в край, а у другой был пустой вырез
+                    val cut = WindowInsets.displayCutout.union(WindowInsets.navigationBars)
+                    val side = with(density) {
+                        val l = cut.getLeft(this, LayoutDirection.Ltr)
+                        val r = cut.getRight(this, LayoutDirection.Ltr)
+                        max(max(l, r).toDp(), if (settings.landscape) 20.dp else 0.dp)
+                    }
+                    Box(
+                        Modifier.fillMaxWidth()
+                            .windowInsetsPadding(WindowInsets.navigationBars.only(WindowInsetsSides.Bottom))
+                            .padding(horizontal = side)
+                            .padding(bottom = settings.bottomOffsetDp.dp)
+                    ) {
                         KeyboardScreen(state, actions, voice, settings, palette, font)
                     }
+                    // ободок стеклянного листа: светлая линия по верхнему краю, по скруглениям уходит в ничто
+                    skin?.edge?.let { edge ->
+                        Canvas(Modifier.matchParentSize()) { drawTopEdge(edge, corner.dp.toPx()) }
+                    }
+                    // улучшение текста: плашка с индикатором поверх клавиатуры
                     AiGlowOverlay(state.aiBusy, state.aiDone, palette, font)
                 }
             }
@@ -1867,6 +2196,8 @@ internal fun KeyboardScreen(
     val gap = if (settings.landscape) 4.dp else 8.dp
 
     Box(Modifier.fillMaxWidth().onGloballyPositioned { layer.coords = it }) {
+        // слой мода под клавишами — первым, чтобы клавиши легли поверх
+        ScriptBackgroundLayer()
         Column(
             modifier = Modifier.fillMaxWidth().padding(horizontal = sidePadding, vertical = gap),
             verticalArrangement = Arrangement.spacedBy(gap)
@@ -1876,16 +2207,29 @@ internal fun KeyboardScreen(
             if (panel == ActivePanel.TRANSLATE) TranslatorBar(state, actions, settings, palette, font)
             if (panel == ActivePanel.EMOJI_SEARCH) EmojiSearchBar(state, actions, settings, palette, font)
             if (panel == ActivePanel.GIF_SEARCH) GifSearchBar(state, actions, palette, font)
+            if (panel == ActivePanel.AI_WRITE || panel == ActivePanel.AI_PROMPT) AiWriteBar(state, actions, palette, font)
+            if (panel == ActivePanel.SCRIPT_INPUT) ScriptInputBar(actions, palette, font)
             Box(Modifier.fillMaxWidth().height(bodyHeight)) {
-                val body = if (panel == ActivePanel.TRANSLATE || panel == ActivePanel.EMOJI_SEARCH || panel == ActivePanel.GIF_SEARCH) {
+                val body = if (panel == ActivePanel.TRANSLATE || panel == ActivePanel.EMOJI_SEARCH || panel == ActivePanel.GIF_SEARCH ||
+                    panel == ActivePanel.AI_WRITE || panel == ActivePanel.AI_PROMPT || panel == ActivePanel.SCRIPT_INPUT) {
                     ActivePanel.KEYBOARD
                 } else panel
-                if (settings.panelAnimations) {
+                if (settings.panelAnimations && settings.animPanel != "NONE") {
+                    val k = settings.animSpeed
+                    val style = settings.animPanel
                     AnimatedContent(
                         targetState = body,
                         transitionSpec = {
-                            (fadeIn(tween(160)) + scaleIn(spring(dampingRatio = 0.75f, stiffness = 500f), initialScale = 0.94f)) togetherWith
-                                fadeOut(tween(100))
+                            val fadeMs = (160 / k).toInt()
+                            // панель сменилась, пока клавиатура была скрыта: при появлении — сразу, без проявления
+                            when {
+                                state.instantUi -> EnterTransition.None togetherWith ExitTransition.None
+                                style == "SLIDE" -> (slideInVertically(spring(dampingRatio = 0.85f, stiffness = 600f * k * k)) { it / 5 } + fadeIn(tween(fadeMs))) togetherWith
+                                    (slideOutVertically(spring(dampingRatio = 1f, stiffness = 900f * k * k)) { -it / 8 } + fadeOut(tween((100 / k).toInt())))
+                                style == "FADE" -> fadeIn(tween(fadeMs)) togetherWith fadeOut(tween((110 / k).toInt()))
+                                else -> (fadeIn(tween(fadeMs)) + scaleIn(spring(dampingRatio = 0.75f, stiffness = 500f * k * k), initialScale = 0.94f)) togetherWith
+                                    fadeOut(tween((100 / k).toInt()))
+                            }
                         },
                         label = "body"
                     ) { target -> PanelBody(target, state, actions, voice, settings, palette, font, spec, popup, layer, glide) }
@@ -1896,7 +2240,7 @@ internal fun KeyboardScreen(
         }
         GlideTrailLayer(glide, trailColor, settings.glideTrail)
         ScriptOverlayLayer()
-        PopupLayer(popup, palette, font, spec)
+        PopupLayer(popup, palette, font, spec, settings.animPopup, settings.animSpeed)
         ScriptFrameTicker()
     }
 }
@@ -2229,15 +2573,20 @@ internal fun KeyGrid(
     layer: CoordsHolder,
     glide: GlideController
 ) {
-    val lang = state.language
+    // своя раскладка языка из настроек (тот же язык — другие ряды)
+    val lang = remember(state.language, settings.langLayouts) {
+        Languages.applyUserLayouts(settings.langLayouts)
+        Languages.withUser(state.language)
+    }
     val page = state.symbolsPage
     val shift = state.shift
     val enter = state.enterAction
     val pluginLayouts = PluginRepository.layouts
     val scriptLayouts = ScriptHost.layoutOverrides
     val langLabels = remember(settings.languages, Languages.extra) { Languages.enabled(settings).map { it.label } }
-    val rows = remember(
-        lang, page, settings.showNumberRow, settings.showGlobeKey, settings.showEmojiKey, settings.punctuationKeys,
+    val split = settings.landscape && settings.landscapeSplit
+    val baseRows = remember(
+        lang, lang.rows, page, settings.showNumberRow, settings.showGlobeKey, settings.showEmojiKey, settings.punctuationKeys,
         settings.spaceLeftKey, settings.spaceRightKey, langLabels, pluginLayouts, scriptLayouts, settings.userLayouts
     ) {
         KeyboardLayouts.rows(
@@ -2245,17 +2594,25 @@ internal fun KeyGrid(
             langLabels, settings.spaceLeftKey, settings.spaceRightKey, settings.userLayoutMap
         )
     }
+    // DUO: разбиение на половины делает splitRow ниже, поэтому берём базовые ряды как есть
+    val rows = baseRows
+    // удержание как в Gboard: символ с того же места на странице «?123»
+    val holdSymbols = remember(lang, page, settings.holdMode, baseRows, pluginLayouts, settings.userLayouts) {
+        if (settings.holdMode != "SYMBOLS" || page != 0) emptyMap()
+        else KeyboardLayouts.holdSymbols(baseRows, KeyboardLayouts.rows(lang, 1, false, user = settings.userLayoutMap))
+    }
     val upper = shift != ShiftState.OFF && page == 0
     val glideEnabled = settings.glideTyping && state.glideAllowed && page == 0 && lang.composer == Composer.NONE
     val dense = page == 0 && rows.any { r -> r.keys.count { it.type == KeyType.CHARACTER } >= 11 }
     val hSpace = (if (dense) min(settings.keySpacingDp, 4f) else settings.keySpacingDp).dp
 
     val configuration = LocalConfiguration.current
+    // DUO: сплит включается вручную/по ширине экрана или режимом «сплит в альбомной»
     val isSplit = when (settings.splitKeyboard) {
         "ON" -> true
         "OFF" -> false
         else -> configuration.screenWidthDp >= 600
-    }
+    } || split
     val splitGap = settings.splitGapDp.dp
 
     Box(Modifier.fillMaxSize()) {
@@ -2271,7 +2628,7 @@ internal fun KeyGrid(
                     else -> 0.dp
                 }
 
-                Row(Modifier.fillMaxWidth().weight(row.heightWeight), horizontalArrangement = Arrangement.spacedBy(0.dp)) {
+                Row(Modifier.fillMaxWidth().weight(row.heightWeight), horizontalArrangement = Arrangement.spacedBy(hSpace)) {
                     if (isSplit) {
                         val hasSpaceKey = row.keys.any { it.type == KeyType.SPACE }
                         if (hasSpaceKey && !settings.splitSpacebar) {
@@ -2279,7 +2636,7 @@ internal fun KeyGrid(
                             val (leftKeys, rightKeys) = splitRow(row, settings.splitMode, false)
                             val leftWeight = leftKeys.sumOf { it.weight.toDouble() }.toFloat().coerceAtLeast(1f)
                             val rightWeight = rightKeys.sumOf { it.weight.toDouble() }.toFloat().coerceAtLeast(1f)
-                            Row(Modifier.weight(leftWeight).fillMaxHeight(), horizontalArrangement = Arrangement.spacedBy(0.dp)) {
+                            Row(Modifier.weight(leftWeight).fillMaxHeight(), horizontalArrangement = Arrangement.spacedBy(hSpace)) {
                                 for (key in leftKeys) {
                                     KeyView(
                                         key = key,
@@ -2297,7 +2654,7 @@ internal fun KeyGrid(
                                         glideEnabled = false,
                                         numberRow = false,
                                         modifier = Modifier.weight(key.weight).fillMaxHeight(),
-                                        hSpace = hSpace
+                                        holdSymbol = if (key.type == KeyType.CHARACTER) holdSymbols[key] else null, gapX = hSpace, gapY = settings.rowSpacingDp.dp
                                     )
                                 }
                             }
@@ -2317,9 +2674,9 @@ internal fun KeyGrid(
                                 glideEnabled = false,
                                 numberRow = false,
                                 modifier = Modifier.weight(max(3f, spaceKey.weight)).fillMaxHeight(),
-                                hSpace = hSpace
+                                gapX = hSpace, gapY = settings.rowSpacingDp.dp
                             )
-                            Row(Modifier.weight(rightWeight).fillMaxHeight(), horizontalArrangement = Arrangement.spacedBy(0.dp)) {
+                            Row(Modifier.weight(rightWeight).fillMaxHeight(), horizontalArrangement = Arrangement.spacedBy(hSpace)) {
                                 for (key in rightKeys) {
                                     KeyView(
                                         key = key,
@@ -2337,13 +2694,13 @@ internal fun KeyGrid(
                                         glideEnabled = false,
                                         numberRow = false,
                                         modifier = Modifier.weight(key.weight).fillMaxHeight(),
-                                        hSpace = hSpace
+                                        holdSymbol = if (key.type == KeyType.CHARACTER) holdSymbols[key] else null, gapX = hSpace, gapY = settings.rowSpacingDp.dp
                                     )
                                 }
                             }
                         } else {
                             val (leftKeys, rightKeys) = splitRow(row, settings.splitMode, settings.splitSpacebar)
-                            Row(Modifier.weight(1f).fillMaxHeight(), horizontalArrangement = Arrangement.spacedBy(0.dp)) {
+                            Row(Modifier.weight(1f).fillMaxHeight(), horizontalArrangement = Arrangement.spacedBy(hSpace)) {
                                 if (staggerOffset > 0.dp) Spacer(Modifier.width(staggerOffset))
                                 for (key in leftKeys) {
                                     if (key.type == KeyType.SPACER) {
@@ -2372,12 +2729,12 @@ internal fun KeyGrid(
                                         glideEnabled = glideEnabled,
                                         numberRow = isNumberRow,
                                         modifier = Modifier.weight(key.weight).fillMaxHeight(),
-                                        hSpace = hSpace
+                                        holdSymbol = if (key.type == KeyType.CHARACTER) holdSymbols[key] else null, gapX = hSpace, gapY = settings.rowSpacingDp.dp
                                     )
                                 }
                             }
                             Spacer(Modifier.width(splitGap))
-                            Row(Modifier.weight(1f).fillMaxHeight(), horizontalArrangement = Arrangement.spacedBy(0.dp)) {
+                            Row(Modifier.weight(1f).fillMaxHeight(), horizontalArrangement = Arrangement.spacedBy(hSpace)) {
                                 for (key in rightKeys) {
                                     if (key.type == KeyType.SPACER) {
                                         Spacer(Modifier.weight(key.weight))
@@ -2405,7 +2762,7 @@ internal fun KeyGrid(
                                         glideEnabled = glideEnabled,
                                         numberRow = isNumberRow,
                                         modifier = Modifier.weight(key.weight).fillMaxHeight(),
-                                        hSpace = hSpace
+                                        holdSymbol = if (key.type == KeyType.CHARACTER) holdSymbols[key] else null, gapX = hSpace, gapY = settings.rowSpacingDp.dp
                                     )
                                 }
                                 if (staggerOffset > 0.dp) Spacer(Modifier.width(staggerOffset))
@@ -2439,7 +2796,7 @@ internal fun KeyGrid(
                                 glideEnabled = glideEnabled,
                                 numberRow = isNumberRow,
                                 modifier = Modifier.weight(key.weight).fillMaxHeight(),
-                                hSpace = hSpace
+                                holdSymbol = if (key.type == KeyType.CHARACTER) holdSymbols[key] else null, gapX = hSpace, gapY = settings.rowSpacingDp.dp
                             )
                         }
                     }

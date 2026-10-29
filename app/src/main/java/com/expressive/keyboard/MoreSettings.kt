@@ -148,6 +148,7 @@ internal fun LanguagesPage(settings: KeyboardSettings) {
     val dictVersion = Dictionaries.version
     val status = Dictionaries.status
     var query by remember { mutableStateOf("") }
+    var layoutFor by remember { mutableStateOf<KeyboardLanguage?>(null) }
 
     fun save(list: List<KeyboardLanguage>) =
         KeyboardPrefs.edit(context) { putString("languages", list.joinToString(",") { it.id }) }
@@ -177,6 +178,9 @@ internal fun LanguagesPage(settings: KeyboardSettings) {
                     lang,
                     dictState(context, lang, status),
                     trailing = {
+                        IconButton(onClick = { layoutFor = lang }) {
+                            Icon(Icons.Rounded.Keyboard, tr("Раскладка"), tint = if (lang.customLayout) cs.primary else cs.onSurfaceVariant)
+                        }
                         IconButton(onClick = { if (i > 0) save(enabled.toMutableList().also { java.util.Collections.swap(it, i, i - 1) }) }, enabled = i > 0) {
                             Icon(Icons.Rounded.KeyboardArrowUp, "Выше")
                         }
@@ -223,6 +227,7 @@ internal fun LanguagesPage(settings: KeyboardSettings) {
             KeyboardPrefs.edit(context) { putBoolean("dict_auto_download", it) }
         }
     }
+    layoutFor?.let { l -> LangLayoutDialog(l, settings) { layoutFor = null } }
 }
 
 private fun dictState(context: Context, lang: KeyboardLanguage, status: Map<String, String>, enabled: Boolean = true): String {
@@ -259,6 +264,12 @@ private fun LanguageRow(lang: KeyboardLanguage, state: String, trailing: @Compos
                     state, style = MaterialTheme.typography.bodySmall,
                     color = if (error) cs.error else if (canDownload) cs.primary else cs.onSurfaceVariant
                 )
+                if (lang.customLayout) {
+                    Text(
+                        tr("Своя раскладка: {0}", lang.rows.firstOrNull()?.take(6)?.joinToString("").orEmpty() + "…"),
+                        style = MaterialTheme.typography.bodySmall, color = cs.primary
+                    )
+                }
             }
             Row(verticalAlignment = Alignment.CenterVertically, content = trailing)
         }
@@ -314,6 +325,8 @@ internal fun IconsPage(settings: KeyboardSettings) {
     var textFor by remember { mutableStateOf<IconSlot?>(null) }
     var menuFor by remember { mutableStateOf<IconSlot?>(null) }
     var confirmReset by remember { mutableStateOf(false) }
+    // список из трёх десятков иконок нужен редко — раскрывается по нажатию
+    var showIcons by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
     val imageLauncher = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
         val slot = target
         if (uri != null && slot != null) scope.launch {
@@ -347,12 +360,15 @@ internal fun IconsPage(settings: KeyboardSettings) {
             )
         }
     }
-    InfoCard(
-        Icons.Rounded.Brush,
-        "Нажмите на иконку, чтобы заменить её своей картинкой (PNG с прозрачностью смотрится лучше всего) " +
-            "или эмодзи/текстом. Картинку можно перекрашивать в цвет темы. Плагины тоже могут менять иконки."
-    )
-    IconStore.slots.groupBy { it.group }.forEach { (group, slots) ->
+    SettingsSection("Свои иконки") {
+        ActionItem(
+            if (showIcons) Icons.Rounded.ExpandLess else Icons.Rounded.Brush,
+            if (showIcons) "Скрыть список иконок" else "Заменить иконки кнопок",
+            "Своя картинка или эмодзи вместо любой иконки: меню, микрофон, ⌫, Enter, вкладки эмодзи",
+            onClick = { showIcons = !showIcons }
+        )
+    }
+    if (showIcons) IconStore.slots.groupBy { it.group }.forEach { (group, slots) ->
         SettingsSection(group) {
             for (slot in slots) {
                 val custom = IconStore.userIcon(slot.id)
@@ -384,7 +400,7 @@ internal fun IconsPage(settings: KeyboardSettings) {
             }
         }
     }
-    SettingsSection(null) {
+    if (showIcons) SettingsSection(null) {
         ActionItem(Icons.Rounded.RestartAlt, "Вернуть все иконки", null, onClick = { confirmReset = true })
     }
 
@@ -454,6 +470,15 @@ internal fun ToolbarPage(settings: KeyboardSettings) {
         "Порядок кнопок на панели инструментов (кнопка с сеткой слева вверху). На самой клавиатуре порядок тоже " +
             "меняется: удерживайте кнопку и перетащите её влево или вправо."
     )
+    SettingsSection("Кнопка панели") {
+        ToggleItem(
+            Icons.Rounded.Apps, "Кнопка панели функций",
+            if (settings.toolsButton) "Кнопка с сеткой слева от подсказок"
+            else if (settings.showSuggestions) "Скрыта: панель функций появляется, когда поле пустое"
+            else "Скрыта: подсказки выключены, поэтому панель функций видна всегда",
+            settings.toolsButton
+        ) { KeyboardPrefs.edit(context) { putBoolean("tools_button", it) } }
+    }
     SettingsSection("Кнопки") {
         order.forEachIndexed { i, id ->
             val def = byId[id] ?: return@forEachIndexed
@@ -530,4 +555,83 @@ internal fun EmojiStylePicker(settings: KeyboardSettings, onCustom: () -> Unit) 
             }
         }
     }
+}
+
+// ----------------------------------------------------------------------- своя раскладка языка
+
+/** Сохранить ряды языка (null — вернуть раскладку языка). */
+internal fun saveLangLayout(context: Context, settings: KeyboardSettings, langId: String, rows: List<String>?) {
+    val o = runCatching { JSONObject(settings.langLayouts.ifBlank { "{}" }) }.getOrDefault(JSONObject())
+    if (rows == null) o.remove(langId) else o.put(langId, JSONArray(rows))
+    KeyboardPrefs.edit(context) { putString("lang_layouts", if (o.length() == 0) "" else o.toString()) }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+internal fun LangLayoutDialog(lang: KeyboardLanguage, settings: KeyboardSettings, onDismiss: () -> Unit) {
+    val context = LocalContext.current
+    val cs = MaterialTheme.colorScheme
+    val original = remember(lang.id) { Languages.original(lang.id) ?: lang }
+    val current = Languages.userRows[lang.id] ?: original.rows
+    var text by remember { mutableStateOf(current.joinToString("\n") { Languages.rowToText(it) }) }
+    var otherOpen by remember { mutableStateOf(false) }
+    val rows = text.lines().map { it.trim() }.filter { it.isNotEmpty() }
+    val parsed = rows.map { Languages.parseRowText(it) }
+    val error = when {
+        parsed.isEmpty() -> tr("Нужен хотя бы один ряд")
+        parsed.size > 5 -> tr("Не больше 5 рядов")
+        parsed.any { it.size > 14 } -> tr("В ряду не больше 14 клавиш")
+        else -> null
+    }
+    fun fill(r: List<List<String>>) { text = r.joinToString("\n") { Languages.rowToText(it) } }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        icon = { Icon(Icons.Rounded.Keyboard, null) },
+        title = { Text(tr("Раскладка: {0}", lang.displayTitle())) },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(
+                    tr("Словарь, подсказки и голосовой ввод остаются от языка — меняются только клавиши. Последний ряд получает Shift и ⌫."),
+                    style = MaterialTheme.typography.bodySmall, color = cs.onSurfaceVariant
+                )
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    AssistChip(onClick = { fill(original.rows) }, label = { Text(tr("Как у языка")) })
+                    Languages.presets.forEach { (name, r) ->
+                        AssistChip(onClick = { fill(r.map { Languages.parseRowText(it) }) }, label = { Text(name) })
+                    }
+                    AssistChip(onClick = { otherOpen = !otherOpen }, label = { Text(tr("Другого языка…")) })
+                }
+                if (otherOpen) {
+                    Column(
+                        Modifier.fillMaxWidth().heightIn(max = 220.dp).clip(RoundedCornerShape(16.dp)).background(cs.surfaceContainerHighest)
+                            .verticalScroll(rememberScrollState())
+                    ) {
+                        Languages.all.filter { it.id != lang.id && it.composer == Composer.NONE }.forEach { l ->
+                            Text(
+                                "${l.displayTitle()} · " + l.rows.firstOrNull()?.take(6)?.joinToString("").orEmpty(),
+                                Modifier.fillMaxWidth().clickable { fill(l.rows); otherOpen = false }.padding(horizontal = 14.dp, vertical = 10.dp),
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+                        }
+                    }
+                }
+                OutlinedTextField(
+                    value = text, onValueChange = { text = it },
+                    label = { Text(tr("Ряды — по одному в строке")) },
+                    supportingText = { Text(error ?: tr("Буквы подряд: йцукен. Через пробел — если на клавише несколько знаков: sh ch ŋ")) },
+                    isError = error != null,
+                    textStyle = MaterialTheme.typography.bodyLarge.copy(fontFamily = FontFamily.Monospace),
+                    shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth(), minLines = 3
+                )
+            }
+        },
+        confirmButton = {
+            Button(onClick = {
+                val same = parsed == original.rows
+                saveLangLayout(context, settings, lang.id, if (same) null else rows)
+                onDismiss()
+            }, enabled = error == null) { Text(tr("Сохранить")) }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text(tr("Отмена")) } }
+    )
 }

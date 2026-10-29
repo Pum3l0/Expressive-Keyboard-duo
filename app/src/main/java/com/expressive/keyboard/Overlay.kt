@@ -2,6 +2,16 @@ package com.expressive.keyboard
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.BoxScope
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material3.Text
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.unit.dp
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.LaunchedEffect
@@ -26,6 +36,8 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.text.TextMeasurer
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
@@ -102,6 +114,26 @@ object KeyboardGeometry {
         KeyType.SPACE -> "space"
         KeyType.ENTER -> "enter"
         KeyType.SPACER -> ""
+    }
+
+    /** Буквенная клавиша, ближайшая к точке p (px в координатах клавиатуры), — не дальше ширины клавиши от центра. */
+    fun charKeyNear(p: Offset): KeyHandle? {
+        val l = layer?.coords ?: return null
+        var best: KeyHandle? = null
+        var bestD = Float.MAX_VALUE
+        for (h in snapshot()) {
+            if (h.key.type != KeyType.CHARACTER) continue
+            val k = h.holder.coords ?: continue
+            val pos = l.safePositionOf(k) ?: continue
+            val dx = (p.x - (pos.x + k.size.width / 2f)) / k.size.width.coerceAtLeast(1)
+            val dy = (p.y - (pos.y + k.size.height / 2f)) / k.size.height.coerceAtLeast(1)
+            val d = dx * dx + dy * dy
+            if (d < bestD) {
+                bestD = d
+                best = h
+            }
+        }
+        return best?.takeIf { bestD < 1f }
     }
 
     fun find(name: String): KeyHandle? {
@@ -198,10 +230,52 @@ private fun DrawScope.withItem(it: OverlayItem, pivot: Offset, block: DrawScope.
 @Composable
 internal fun BoxScope.ScriptOverlayLayer() {
     val items = ScriptHost.overlayItems
+    val capture = ScriptHost.touchCapture
+    if (items.isEmpty() && !capture) return
+    val measurer = rememberTextMeasurer()
+    val path = remember { Path() }
+    // мод попросил касания (kb.captureTouches): слой ловит их вместо клавиш — для игр и рисования
+    val touch = if (capture) Modifier.pointerInput(Unit) {
+        awaitPointerEventScope {
+            while (true) {
+                val ev = awaitPointerEvent()
+                val d = density
+                for (c in ev.changes) {
+                    val type = when {
+                        c.pressed && !c.previousPressed -> "down"
+                        !c.pressed && c.previousPressed -> "up"
+                        c.pressed -> "move"
+                        else -> continue
+                    }
+                    ScriptHost.touch(type, c.position.x / d, c.position.y / d, c.id.value.toInt())
+                    c.consume()
+                }
+            }
+        }
+    } else Modifier
+    Canvas(Modifier.matchParentSize().then(touch)) { drawOverlayItems(items, measurer, path) }
+    // выход всегда есть: клавиши под слоем мода не нажимаются, а мод может и не убрать перехват сам
+    if (capture) {
+        Box(
+            Modifier.align(Alignment.TopEnd).padding(6.dp).size(34.dp).clip(CircleShape).background(Color(0x99000000))
+                .clickable { ScriptHost.releaseTouches() },
+            contentAlignment = Alignment.Center
+        ) { Text("✕", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold) }
+    }
+}
+
+/** Слой мода под клавишами (kb.background): рисуется после фона клавиатуры, но до клавиш. */
+@Composable
+internal fun BoxScope.ScriptBackgroundLayer() {
+    val items = ScriptHost.backgroundItems
     if (items.isEmpty()) return
     val measurer = rememberTextMeasurer()
     val path = remember { Path() }
-    Canvas(Modifier.matchParentSize()) {
+    Canvas(Modifier.matchParentSize()) { drawOverlayItems(items, measurer, path) }
+}
+
+/** Элементы kb.overlay (и холста на панели мода): координаты — в dp от угла области рисования. */
+internal fun DrawScope.drawOverlayItems(items: List<OverlayItem>, measurer: TextMeasurer, path: Path) {
         val d = density
         for (it in items) {
             when (it) {
@@ -272,7 +346,6 @@ internal fun BoxScope.ScriptOverlayLayer() {
                 }
             }
         }
-    }
 }
 
 /** Покадровое событие "frame" для модов: ~30 раз в секунду, пока клавиатура на экране и есть подписчики. */

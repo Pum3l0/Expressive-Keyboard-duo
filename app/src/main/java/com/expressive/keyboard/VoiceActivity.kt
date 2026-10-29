@@ -33,6 +33,16 @@ object VoiceBridge {
         putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
         putExtra(RecognizerIntent.EXTRA_LANGUAGE, language)
         putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
+        uncensored(this)
+    }
+
+    /**
+     * Без цензуры: с Android 13 распознавание по умолчанию заменяет бранные слова звёздочками («б***»).
+     * Флаг просит сервис писать слова как сказано (старые версии Google понимают второй ключ).
+     */
+    internal fun uncensored(intent: Intent) {
+        intent.putExtra("android.speech.extra.MASK_OFFENSIVE_WORDS", false)
+        intent.putExtra("android.speech.extra.PROFANITY_FILTER", false)
     }
 
     /** Есть приложение, которое откроет окно распознавания. */

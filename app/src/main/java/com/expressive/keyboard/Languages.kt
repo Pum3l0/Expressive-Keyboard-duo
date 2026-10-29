@@ -40,8 +40,15 @@ class KeyboardLanguage(
     /** Пробелы между словами не ставятся (тайский) — автоисправление по пробелу бессмысленно. */
     val autoCorrect: Boolean = true,
     val rtl: Boolean = false,
-    val fromPlugin: String? = null
+    val fromPlugin: String? = null,
+    /** Ряды заменены своей раскладкой из настроек. */
+    val customLayout: Boolean = false
 ) {
+    /** Тот же язык (словарь, голос, перевод) с другими рядами букв. */
+    fun withRows(newRows: List<List<String>>): KeyboardLanguage = KeyboardLanguage(
+        id, label, spaceLabel, title, locale, newRows, shiftMap, accents, dict, hasCase, composer, autoCorrect, rtl, fromPlugin, true
+    )
+
     override fun equals(other: Any?): Boolean = other is KeyboardLanguage && other.id == id && other.fromPlugin == fromPlugin
     override fun hashCode(): Int = id.hashCode()
     override fun toString(): String = id
@@ -229,6 +236,96 @@ object Languages {
             shift = "ๅ+ ภ๑ ถ๒ ุ๓ ึ๔ คู ต฿ จ๕ ข๖ ช๗ ไ\" ำฎ พฑ ะธ ัํ ี๊ รณ นฯ ยญ บฐ ฃฅ ฟฤ หฆ กฏ ดโ เฌ ้็ ่๋ าษ สศ วซ ผ( ป) แฉ อฮ ิฺ ื์ มฒ ใฬ ฝฦ",
             dict = "th", hasCase = false, autoCorrect = false
         ),
+        // бирманский (мьянманский): как Myanmar в Windows и Gboard — буквы в логическом порядке Unicode
+        L(
+            "my", "MY", "မြန်မာ", "Бирманский (мьянманский)", "my-MM",
+            listOf("ဆ တ န မ အ ပ က င သ စ ဟ", "ေ ျ ိ ် ါ ့ ြ ု ူ း ဒ", "ဖ ထ ခ လ ဘ ည ာ ယ ရ"),
+            accents = "း၊။ ဧ၏ ယ၎",
+            shift = "ဆဈ တဝ နဣ မ၎ အဤ ပ၌ ကဥ င၍ သဿ စဏ ဟဧ ေဗ ျှ ိီ ်္ ါွ ့ံ ြဲ ုဍ ူဓ းဂ ဒဎ ဖဇ ထဌ ခဃ လဠ ဘဋ ညဉ ာဦ ယဩ ရဪ",
+            dict = null, hasCase = false, autoCorrect = false
+        ),
+        // кхмерский: раскладка NiDA
+        L(
+            "km", "KM", "ខ្មែរ", "Кхмерский", "km-KH",
+            listOf("ឆ ឹ េ រ ត យ ុ ិ ោ ផ ៀ ឪ", "ា ស ដ ថ ង ហ ្ ក ល ើ ់", "ឋ ខ ច វ ប ន ម ។ ៊"),
+            accents = "អឯឰឱឲឳ ។ៗ៕",
+            shift = "ឆឈ ឹឺ េែ រឬ តទ យួ ុូ ិី ោៅ ផភ ៀឿ ឪឧ ាាំ សៃ ដឌ ថធ ងអ ហះ ្ញ កគ លឡ ើោះ ់៉ ឋឍ ខឃ ចជ វេះ បព នណ មំ ។៕ ៊ុះ",
+            dict = null, hasCase = false, autoCorrect = false
+        ),
+        // лаосский: верхний ряд — буквы, которые на обычной лаосской клавиатуре стоят на цифрах
+        L(
+            "lo", "LO", "ລາວ", "Лаосский", "lo-LA",
+            listOf("ຢ ຟ ໂ ຖ ຸ ູ ຄ ຕ ຈ ຂ ຊ ໍ", "ົ ໄ ຳ ພ ະ ິ ີ ຮ ນ ຍ ບ ລ", "ັ ຫ ກ ດ ເ ້ ່ າ ສ ວ ງ", "ຜ ປ ແ ອ ຶ ື ທ ມ ໃ ຝ"),
+            shift = "ຫໜ ມໝ ້໊ ່໋ ຍຽ ໃຼ",
+            dict = null, hasCase = false, autoCorrect = false
+        ),
+        // сингальский: раскладка Wijesekara
+        L(
+            "si", "SI", "සිංහල", "Сингальский", "si-LK",
+            listOf("ු අ ැ ර එ හ ම ස ද ච ඤ", "් ි ා ෙ ට ය ව න ක ත", "ං ජ ඩ ඉ බ ප ල ග"),
+            accents = "අආඇඈ එඒඓ ඔඕඖ ෙෛොෝෞ දඳ ඩඬ ගඟ ජඦ ංඃ",
+            shift = "ුූ අඋ ැෑ රඍ එඔ හශ මඹ සෂ දධ චඡ ඤඥ ිී ාෘ ෙෆ ටඨ ය්‍ය වළු නණ කඛ තථ ංඞ ජඣ ඩඪ ඉඊ බභ පඵ ලළ ගඝ",
+            dict = "si", hasCase = false
+        ),
+        L(
+            "ps", "PS", "پښتو", "Пушту", "ps-AF",
+            listOf("ض ص ث ق ف غ ع ه خ ح ج چ", "ش س ی ب ل ا ت ن م ک ګ", "ظ ط ز ر ذ د پ و ږ ژ"),
+            "تټ دډ رړ سښ نڼ یۍېئ جځ حڅ اآ", dict = null, hasCase = false, rtl = true
+        ),
+        L(
+            "ckb", "CKB", "کوردی", "Курдский (сорани)", "ckb-IQ",
+            listOf("ق و ە ر ت ی ئ ح ۆ پ ع", "ا س ش د ف گ ھ ژ ک ل", "ز خ ج چ ڤ ب ن م غ"),
+            "رڕ لڵ یێ", dict = null, hasCase = false, rtl = true
+        ),
+        L(
+            "ug", "UG", "ئۇيغۇرچە", "Уйгурский", "ug-CN",
+            listOf("چ ۋ ې ر ت ي ۇ ڭ و پ ف ج", "ھ س د ا ە ى ق ك ل گ خ", "ز ش غ ۈ ب ن م ۆ ژ"),
+            "ىئ", dict = null, hasCase = false, rtl = true
+        ),
+        // языки России и соседей на кириллице: русская раскладка и ряд своих букв
+        L("cv", "CV", "Чӑвашла", "Чувашский", "cv-RU", listOf("ӑӗҫӳ", RU_ROWS_1 + "ъ", RU_ROWS_2, RU_ROWS_3 + "ё"), dict = null),
+        L("sah", "SAH", "Саха тыла", "Якутский", "sah-RU", listOf("ҕҥөһү", RU_ROWS_1 + "ъ", RU_ROWS_2, RU_ROWS_3 + "ё"), dict = null),
+        L("os", "OS", "Ирон", "Осетинский", "os-RU", listOf(RU_ROWS_1 + "ъ", RU_ROWS_2, RU_ROWS_3 + "ё"), "аӕ", dict = null),
+        L("ce", "CE", "Нохчийн", "Чеченский", "ce-RU", listOf(RU_ROWS_1 + "ъ", RU_ROWS_2 + "ӏ", RU_ROWS_3 + "ё"), dict = null),
+        L("kbd", "KBD", "Адыгэбзэ", "Кабардинский", "kbd-RU", listOf(RU_ROWS_1 + "ъ", RU_ROWS_2 + "ӏ", RU_ROWS_3 + "ё"), dict = null),
+        L("av", "AV", "Магӏарул", "Аварский", "av-RU", listOf(RU_ROWS_1 + "ъ", RU_ROWS_2 + "ӏ", RU_ROWS_3 + "ё"), dict = null),
+        L("udm", "UDM", "Удмурт", "Удмуртский", "udm-RU", listOf("ӝӟӥӧӵ", RU_ROWS_1 + "ъ", RU_ROWS_2, RU_ROWS_3 + "ё"), dict = null),
+        L("mhr", "MHR", "Марий", "Марийский", "mhr-RU", listOf("ӓҥӧӱ", RU_ROWS_1 + "ъ", RU_ROWS_2, RU_ROWS_3 + "ё"), dict = null),
+        L("kv", "KV", "Коми", "Коми", "kv-RU", listOf(RU_ROWS_1 + "ъ", RU_ROWS_2, RU_ROWS_3 + "ё"), "иі оӧ", dict = null),
+        L("bua", "BUA", "Буряад", "Бурятский", "bua-RU", listOf("үөһ", RU_ROWS_1 + "ъ", RU_ROWS_2, RU_ROWS_3 + "ё"), dict = null),
+        L("tyv", "TYV", "Тыва", "Тувинский", "tyv-RU", listOf("ңөү", RU_ROWS_1 + "ъ", RU_ROWS_2, RU_ROWS_3 + "ё"), dict = null),
+        L("kjh", "KJH", "Хакас", "Хакасский", "kjh-RU", listOf("іғңӧӱӌ", RU_ROWS_1 + "ъ", RU_ROWS_2, RU_ROWS_3 + "ё"), dict = null),
+        L("crh", "CRH", "Qırımtatar", "Крымскотатарский", "crh-UA", QWERTY, "cç gğ iı nñ oö sş uü", dict = null),
+        L("gag", "GAG", "Gagauz", "Гагаузский", "gag-MD", QWERTY, "aä eê iı oö sş tţ uü", dict = null),
+        // языки Европы на латинице
+        L("oc", "OC", "Occitan", "Окситанский", "oc-FR", QWERTY, "aàá eèé iíï oòó uúü cç", dict = null),
+        L("co", "CO", "Corsu", "Корсиканский", "co-FR", QWERTY, "aà eè iì oò uù", dict = null),
+        L("ast", "AST", "Asturianu", "Астурийский", "ast-ES", listOf("qwertyuiop", "asdfghjklñ", "zxcvbnm"), "aá eé ií oó uúü hḥ lḷ", dict = null),
+        L("rm", "RM", "Rumantsch", "Романшский", "rm-CH", QWERTZ, "aàä eèéë iì oòö uùü", dict = null),
+        L("sc", "SC", "Sardu", "Сардинский", "sc-IT", QWERTY, "aà eè iì oò uù", dict = null),
+        // Африка
+        L("rw", "RW", "Kinyarwanda", "Киньяруанда", "rw-RW", QWERTY, dict = null),
+        L("sn", "SN", "chiShona", "Шона", "sn-ZW", QWERTY, dict = null),
+        L("ny", "NY", "Chichewa", "Чева (ньянджа)", "ny-MW", QWERTY, "wŵ", dict = null),
+        L("st", "ST", "Sesotho", "Сесото", "st-ZA", QWERTY, dict = null),
+        L("tn", "TN", "Setswana", "Тсвана", "tn-BW", QWERTY, "eê oô", dict = null),
+        L("ig", "IG", "Igbo", "Игбо", "ig-NG", QWERTY, "iị oọ uụ nṅ", dict = null),
+        L("om", "OM", "Afaan Oromoo", "Оромо", "om-ET", QWERTY, dict = null),
+        L("ln", "LN", "Lingála", "Лингала", "ln-CD", QWERTY, "eɛé oɔó aá ií uú", dict = null),
+        L("ak", "AK", "Twi", "Тви (акан)", "ak-GH", QWERTY, "eɛ oɔ nŋ", dict = null),
+        L("ee", "EE", "Eʋegbe", "Эве", "ee-GH", QWERTY, "dɖ fƒ gɣ vʋ eɛ oɔ nŋ", dict = null),
+        L("ff", "FF", "Pulaar", "Фула", "ff-SN", QWERTY, "bɓ dɗ nŋñ yƴ", dict = null),
+        L("bm", "BM", "Bamanankan", "Бамбара", "bm-ML", QWERTY, "eɛ oɔ nɲŋ", dict = null),
+        L("wo", "WO", "Wolof", "Волоф", "wo-SN", QWERTY, "aà eéë oó nñŋ", dict = null),
+        L("kab", "KAB", "Taqbaylit", "Кабильский", "kab-DZ", QWERTY, "cč dḍ gǧɣ hḥ rṛ sṣ tṭ zẓ eɛ", dict = null),
+        // Азия и Океания на латинице
+        L("hmn", "HMN", "Hmoob", "Хмонг", "hmn", QWERTY, dict = null),
+        L("sm", "SM", "Gagana Samoa", "Самоанский", "sm-WS", QWERTY, "aā eē iī oō uū", dict = null),
+        L("to", "TO", "Lea faka-Tonga", "Тонганский", "to-TO", QWERTY, "aā eē iī oō uū", dict = null),
+        L("fj", "FJ", "Vosa Vakaviti", "Фиджийский", "fj-FJ", QWERTY, dict = null),
+        // Америка
+        L("qu", "QU", "Runa Simi", "Кечуа", "qu-PE", listOf("qwertyuiop", "asdfghjklñ", "zxcvbnm"), dict = null),
+        L("gn", "GN", "Avañeʼẽ", "Гуарани", "gn-PY", listOf("qwertyuiop", "asdfghjklñ", "zxcvbnmʼ"), "aã eẽ iĩ oõ uũ yỹ", dict = null),
         indic("bn", "BN", "বাংলা", "Бенгальский", "bn-IN", 0x80, "bn"),
         indic("pa", "PA", "ਪੰਜਾਬੀ", "Панджаби", "pa-IN", 0x100, null),
         indic("gu", "GU", "ગુજરાતી", "Гуджарати", "gu-IN", 0x180, null),
@@ -273,11 +370,66 @@ object Languages {
 
     val all: List<KeyboardLanguage> get() = builtIn + extra.filter { e -> builtIn.none { it.id == e.id } }
 
-    fun byId(id: String): KeyboardLanguage? = extra.firstOrNull { it.id == id } ?: builtIn.firstOrNull { it.id == id }
+    fun byId(id: String): KeyboardLanguage? = (extra.firstOrNull { it.id == id } ?: builtIn.firstOrNull { it.id == id })?.let(::withUser)
 
-    fun enabled(settings: KeyboardSettings): List<KeyboardLanguage> =
-        settings.languages.split(',').map { it.trim() }.filter { it.isNotEmpty() }.distinct().mapNotNull(::byId)
-            .ifEmpty { listOf(RU, EN) }
+    /** Язык без своей раскладки — как он задан в приложении или плагине. */
+    fun original(id: String): KeyboardLanguage? = extra.firstOrNull { it.id == id } ?: builtIn.firstOrNull { it.id == id }
+
+    fun enabled(settings: KeyboardSettings): List<KeyboardLanguage> {
+        applyUserLayouts(settings.langLayouts)
+        return settings.languages.split(',').map { it.trim() }.filter { it.isNotEmpty() }.distinct().mapNotNull(::byId)
+            .ifEmpty { listOf(RU, EN).map(::withUser) }
+    }
+
+    // ------------------------------------------------------------------ свои раскладки
+
+    @Volatile private var userRaw = ""
+    /** Код языка → ряды своей раскладки (настройка "lang_layouts"). */
+    @Volatile var userRows: Map<String, List<List<String>>> = emptyMap()
+        private set
+    private val userCache = java.util.concurrent.ConcurrentHashMap<String, KeyboardLanguage>()
+
+    fun applyUserLayouts(raw: String) {
+        if (raw == userRaw) return
+        userRows = parseUserLayouts(raw)
+        userCache.clear()
+        userRaw = raw
+    }
+
+    fun parseUserLayouts(raw: String): Map<String, List<List<String>>> = runCatching {
+        if (raw.isBlank()) return emptyMap()
+        val o = JSONObject(raw)
+        o.keys().asSequence().associateWith { k ->
+            val a = o.getJSONArray(k)
+            (0 until a.length()).map { r(a.getString(it).trim()) }.filter { it.isNotEmpty() }
+        }.filterValues { it.isNotEmpty() }
+    }.getOrDefault(emptyMap())
+
+    /** Язык со своей раскладкой, если она задана; иначе он сам. */
+    fun withUser(lang: KeyboardLanguage): KeyboardLanguage {
+        val base = if (lang.customLayout) original(lang.id) ?: lang else lang
+        val rows = userRows[base.id] ?: return base
+        return userCache.getOrPut(base.id) { base.withRows(rows) }
+    }
+
+    /** Ряд текстом: «qwerty» — по символу, «sh ch q» (с пробелами) — по клавишам. */
+    fun rowToText(row: List<String>): String = if (row.all { it.length == 1 }) row.joinToString("") else row.joinToString(" ")
+
+    fun parseRowText(text: String): List<String> = r(text.trim())
+
+    /** Готовые раскладки: известные латинские и кириллические и раскладки всех языков. */
+    val presets: List<Pair<String, List<String>>> by lazy {
+        listOf(
+            "QWERTY" to QWERTY,
+            "QWERTZ" to QWERTZ,
+            "AZERTY" to listOf("azertyuiop", "qsdfghjklm", "wxcvbn"),
+            "Colemak" to listOf("qwfpgjluy", "arstdhneio", "zxcvbkm"),
+            "Dvorak" to listOf("pyfgcrl", "aoeuidhtns", "qjkxbmwvz"),
+            "ЙЦУКЕН" to listOf(RU_ROWS_1, RU_ROWS_2, RU_ROWS_3),
+            "ЙЦУКЕН + ё ъ" to listOf(RU_ROWS_1 + "ъ", RU_ROWS_2, RU_ROWS_3 + "ё"),
+            "ЯВЕРТЫ (фонетическая)" to listOf("явертыуиопшщ", "асдфгчйклэю", "зьцжбнмх")
+        )
+    }
 
     /** Язык из плагина: { "id", "name", "label", "locale", "rows": ["...", ...], "shift": {..}, "variants": {..} }. */
     fun parse(o: JSONObject, pluginId: String): KeyboardLanguage {

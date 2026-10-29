@@ -647,13 +647,16 @@ internal fun ColorPickerDialog(
     initial: Int,
     allowAuto: Boolean,
     onDismiss: () -> Unit,
+    withAlpha: Boolean = false,
+    autoLabel: String = "Авто",
     onPick: (Int) -> Unit
 ) {
     val start = remember { FloatArray(3).also { AndroidColor.colorToHSV(if (initial == 0) 0xFF6750A4.toInt() else initial, it) } }
     var h by remember { mutableFloatStateOf(start[0]) }
     var s by remember { mutableFloatStateOf(start[1]) }
     var v by remember { mutableFloatStateOf(start[2]) }
-    val color = hsvColor(h, s, v)
+    var alpha by remember { mutableFloatStateOf(if (initial == 0 || !withAlpha) 1f else (initial ushr 24) / 255f) }
+    val color = hsvColor(h, s, v).copy(alpha = alpha)
     var hex by remember { mutableStateOf(String.format("%06X", color.toArgb() and 0xFFFFFF)) }
     fun setFrom(argb: Int) {
         val t = FloatArray(3)
@@ -709,10 +712,14 @@ internal fun ColorPickerDialog(
                     v = it
                     syncHex()
                 }
+                if (withAlpha) {
+                    Text(tr("Непрозрачность") + " · ${(alpha * 100).roundToInt()}%", style = MaterialTheme.typography.labelLarge, color = cs.onSurfaceVariant)
+                    GradientBar(alpha, Brush.horizontalGradient(listOf(hsvColor(h, s, v).copy(alpha = 0f), hsvColor(h, s, v))), color) { alpha = it }
+                }
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     SWATCHES.chunked(6).forEach { row ->
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                            row.forEach { c -> ColorDot(Color(c), c == color.toArgb(), 38.dp) { setFrom(c) } }
+                            row.forEach { c -> ColorDot(Color(c), c == color.copy(alpha = 1f).toArgb(), 38.dp) { setFrom(c) } }
                         }
                     }
                 }
@@ -721,7 +728,7 @@ internal fun ColorPickerDialog(
         confirmButton = { Button(onClick = { onPick(color.toArgb()) }) { Text(tr("Готово")) } },
         dismissButton = {
             Row {
-                if (allowAuto) TextButton(onClick = { onPick(0) }) { Text(tr("Авто")) }
+                if (allowAuto) TextButton(onClick = { onPick(0) }) { Text(tr(autoLabel)) }
                 TextButton(onClick = onDismiss) { Text(tr("Отмена")) }
             }
         }

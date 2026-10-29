@@ -14,10 +14,9 @@ android {
         applicationId = "com.expressive.keyboard"
         minSdk = 26
         targetSdk = 35
-        versionCode = 16
-
-        versionName = "11.1.2-duo.1"
-
+        // DUO: базовая версия берётся из upstream, суффикс -duo.N — наша ревизия форка
+        versionCode = 20
+        versionName = "11.1.6-duo.1"
         vectorDrawables {
             useSupportLibrary = true
         }
@@ -31,15 +30,40 @@ android {
         buildConfigField("String", "GIPHY_API_KEY", "\"${local.getProperty("GIPHY_API_KEY", "").trim()}\"")
     }
 
+    // своя подпись релиза — если в local.properties (он не попадает в git) указан keystore:
+    // RELEASE_STORE_FILE=…, RELEASE_STORE_PASSWORD=…, RELEASE_KEY_ALIAS=…, RELEASE_KEY_PASSWORD=…
+    // Без него релиз подписывается отладочным ключом, как раньше (иначе уже установленные копии не обновятся).
+    val localProps = Properties().apply {
+        val f = rootProject.file("local.properties")
+        if (f.exists()) f.inputStream().use { load(it) }
+    }
+    val releaseStore = localProps.getProperty("RELEASE_STORE_FILE")?.let { rootProject.file(it) }?.takeIf { it.exists() }
+    signingConfigs {
+        getByName("debug") {
+            enableV2Signing = true
+            enableV3Signing = true
+        }
+        if (releaseStore != null) create("release") {
+            storeFile = releaseStore
+            storePassword = localProps.getProperty("RELEASE_STORE_PASSWORD")
+            keyAlias = localProps.getProperty("RELEASE_KEY_ALIAS")
+            keyPassword = localProps.getProperty("RELEASE_KEY_PASSWORD")
+            enableV2Signing = true
+            enableV3Signing = true
+        }
+    }
+
     buildTypes {
         release {
+            // ревизия git и путь к проекту не попадают в APK
+            vcsInfo.include = false
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.findByName("release") ?: signingConfigs.getByName("debug")
         }
         debug {
             signingConfig = signingConfigs.getByName("debug")
@@ -66,6 +90,11 @@ android {
     buildFeatures {
         compose = true
         buildConfig = true
+    }
+
+    testOptions {
+        // проверки качества исправлений и свайпа гоняются на компьютере, без телефона
+        unitTests.isReturnDefaultValues = true
     }
 
     dependenciesInfo {
@@ -119,4 +148,6 @@ dependencies {
     implementation("org.mozilla:rhino:1.7.15")
 
     implementation("androidx.profileinstaller:profileinstaller:1.3.1")
+
+    testImplementation("junit:junit:4.13.2")
 }

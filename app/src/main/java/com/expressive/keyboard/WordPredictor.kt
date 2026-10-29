@@ -186,8 +186,95 @@ data class PredictionSnapshot(
     val known: Boolean = false
 )
 
-/** Словарь одного языка: слова по убыванию частоты. */
-class LangDict(words: List<String>) {
+/**
+ * Редкие слова языка (формы слов, имена — ещё ~200 000): только «есть ли слово» и его место по частоте.
+ * Хранятся компактно — по байту на букву, поиск двоичный: без них незнакомую форму слова («испытательного»)
+ * исправление превращало в соседнюю знакомую («испытательном»).
+ */
+class RareWords(entries: List<Pair<String, Int>>, private val firstRank: Int) {
+    private val codes = HashMap<Char, Int>()
+    private val data: ByteArray
+    private val starts: IntArray
+    private val ranks: IntArray
+    val size: Int get() = starts.size - 1
+
+    init {
+        val chars = HashSet<Char>()
+        var total = 0
+        for ((w, _) in entries) {
+            total += w.length
+            for (c in w) chars += c
+        }
+        // больше 254 разных букв в одном языке не бывает; если вдруг — лишние слова пропускаются
+        chars.sorted().take(254).forEachIndexed { i, c -> codes[c] = i + 1 }
+        val ok = entries.filter { (w, _) -> w.all { codes.containsKey(it) } }
+        // файл уже отсортирован (по кодам символов) — сортируем, только если это не так
+        val sorted = if ((1 until ok.size).all { compare(ok[it - 1].first, ok[it].first) <= 0 }) ok
+            else ok.sortedWith { x, y -> compare(x.first, y.first) }
+        data = ByteArray(total)
+        starts = IntArray(sorted.size + 1)
+        ranks = IntArray(sorted.size)
+        var k = 0
+        sorted.forEachIndexed { n, (w, r) ->
+            starts[n] = k
+            ranks[n] = r
+            for (c in w) data[k++] = codes.getValue(c).toByte()
+        }
+        starts[sorted.size] = k
+    }
+
+    companion object {
+        /** Строки «слово место36» (dict/<code>_more.txt). */
+        fun parse(lines: List<String>): List<Pair<String, Int>> = lines.mapNotNull { l ->
+            val sp = l.indexOf(' ')
+            if (sp <= 0) null else l.substring(0, sp) to (l.substring(sp + 1).trim().toIntOrNull(36) ?: return@mapNotNull null)
+        }
+    }
+
+    private fun compare(a: String, b: String): Int {
+        val n = min(a.length, b.length)
+        for (i in 0 until n) {
+            val d = (codes[a[i]] ?: 0) - (codes[b[i]] ?: 0)
+            if (d != 0) return d
+        }
+        return a.length - b.length
+    }
+
+    /** Сравнение слова номер n (в порядке сортировки) с w. */
+    private fun compareAt(n: Int, w: String): Int {
+        val s = starts[n]
+        val len = starts[n + 1] - s
+        val m = min(len, w.length)
+        for (i in 0 until m) {
+            val c = codes[w[i]] ?: return -1
+            val d = (data[s + i].toInt() and 0xFF) - c
+            if (d != 0) return d
+        }
+        return len - w.length
+    }
+
+    /** Место слова в частотном списке языка или -1. */
+    fun rankOf(w: String): Int {
+        var lo = 0
+        var hi = size - 1
+        while (lo <= hi) {
+            val mid = (lo + hi) ushr 1
+            val c = compareAt(mid, w)
+            when {
+                c < 0 -> lo = mid + 1
+                c > 0 -> hi = mid - 1
+                else -> return firstRank + ranks[mid]
+            }
+        }
+        return -1
+    }
+}
+
+/** Словарь одного языка: слова по убыванию частоты, редкие формы и частые ошибки написания. */
+class LangDict(words: List<String>, rare: RareWords? = null, typos: Map<String, String> = emptyMap()) {
+    /** Дочитываются после частых слов: подсказки работают сразу, не дожидаясь их. */
+    @Volatile var rare: RareWords? = rare
+    @Volatile var typos: Map<String, String> = typos
     val words: Array<String> = words.toTypedArray()
     val rank: HashMap<String, Int> = HashMap<String, Int>(words.size * 2).also { m -> words.forEachIndexed { i, w -> m.putIfAbsent(w, i) } }
     /** По алфавиту — для поиска продолжений по префиксу. */
@@ -226,6 +313,14 @@ class LangDict(words: List<String>) {
         }
     }
 
+    /** Только совпадение и одна лишняя/ошибочная буква с каждой стороны — для вариантов набранного (дёшево). */
+    fun similarNear(lower: String, out: MutableSet<Int>) {
+        val n = lower.length
+        if (n == 0 || n > SYMSPELL_MAX_LEN + 2) return
+        lookup(hashSkipping(lower, -1, -1), out)
+        for (a in 0 until n) lookup(hashSkipping(lower, a, -1), out)
+    }
+
     private fun lookup(hash: Int, out: MutableSet<Int>) {
         val key = hash.toLong() shl 32
         var lo = 0
@@ -241,6 +336,9 @@ class LangDict(words: List<String>) {
     }
 
     val size: Int get() = words.size
+
+    /** Место слова по частоте среди частых и редких; -1 — слова нет. */
+    fun rankOf(w: String): Int = rank[w] ?: rare?.rankOf(w) ?: -1
 
     companion object {
         private const val SYMSPELL_WORDS = 40_000
@@ -288,6 +386,20 @@ object Dictionaries {
             else -> null
         }
     }.getOrNull()
+
+    /** Встроенные в приложение редкие слова языка (dict/<code>_more.txt) — только для ru и en. */
+    fun readRare(context: Context, code: String): List<Pair<String, Int>>? = runCatching {
+        if (!bundled(context, code + "_more")) null
+        else RareWords.parse(context.assets.open("dict/${code}_more.txt").bufferedReader().use { it.readLines() })
+    }.getOrNull()
+
+    /** Частые ошибки написания «ошибка правильно» (dict/<code>_typos.txt). */
+    fun readTypos(context: Context, code: String): Map<String, String> = runCatching {
+        if (!bundled(context, code + "_typos")) emptyMap()
+        else context.assets.open("dict/${code}_typos.txt").bufferedReader().use { r ->
+            r.readLines().mapNotNull { l -> l.split(' ').takeIf { it.size == 2 }?.let { it[0] to it[1] } }.toMap()
+        }
+    }.getOrDefault(emptyMap())
 
     private val WORD = Regex("^\\p{L}[\\p{L}\\p{M}'\\-]*$")
 
@@ -392,7 +504,15 @@ object SystemSpell {
     fun cached(lang: KeyboardLanguage, word: String): Result? =
         synchronized(cache) { cache[key(lang.locale, word)] }?.takeIf { it !== NONE }
 
-    fun request(context: Context, lang: KeyboardLanguage, word: String) {
+    private val debounceToken = Any()
+    /** Запрос, отложенный до паузы в наборе: (ключ, задача). */
+    private var queued: Pair<String, Runnable>? = null
+
+    /**
+     * debounceMs > 0 — отправить, только если за это время не нажали следующую букву: проверка живёт в чужом
+     * процессе (Gboard, Samsung), и запрос на каждую букву при быстром наборе грел телефон впустую.
+     */
+    fun request(context: Context, lang: KeyboardLanguage, word: String, debounceMs: Long = 0L) {
         if (word.length < 2 || word.length > 40 || !word.all(WordPredictorEngine::isWordChar)) return
         val k = key(lang.locale, word)
         if (synchronized(cache) { cache.containsKey(k) }) return
@@ -401,13 +521,38 @@ object SystemSpell {
         if (p != null && now - p.at < 1500L) return
         pending[k] = Pending(CountDownLatch(1), now)
         val app = context.applicationContext
-        handler.post { runCatching { send(app, lang.locale, word, k) }.onFailure { finish(k, null) } }
+        lateinit var task: Runnable
+        task = Runnable {
+            synchronized(debounceToken) { if (queued?.second === task) queued = null }
+            runCatching { send(app, lang.locale, word, k) }.onFailure { finish(k, null) }
+        }
+        if (debounceMs <= 0L) {
+            handler.post(task)
+            return
+        }
+        synchronized(debounceToken) {
+            // прошлая буква ещё не ушла в проверку — она уже не нужна
+            queued?.let { (oldKey, oldTask) ->
+                handler.removeCallbacks(oldTask, debounceToken)
+                pending.remove(oldKey)?.latch?.countDown()
+            }
+            queued = k to task
+            handler.postAtTime(task, debounceToken, SystemClock.uptimeMillis() + debounceMs)
+        }
+    }
+
+    /** Отложенный запрос — сейчас же (пробел: ответ нужен немедленно). */
+    fun flush() {
+        val t = synchronized(debounceToken) { queued?.second } ?: return
+        handler.removeCallbacks(t, debounceToken)
+        handler.postAtFrontOfQueue(t)
     }
 
     /** Ответ для слова; если запрос ещё в пути — ждёт его не дольше timeoutMs (по пробелу, обычно 0 мс). */
     fun await(lang: KeyboardLanguage, word: String, timeoutMs: Long): Result? {
         cached(lang, word)?.let { return it }
         val p = pending[key(lang.locale, word)] ?: return null
+        flush()
         runCatching { p.latch.await(timeoutMs, TimeUnit.MILLISECONDS) }
         return cached(lang, word)
     }
@@ -601,7 +746,70 @@ object WordPredictorEngine {
         "мне" to listOf("кажется", "нужно", "нравится"),
         "это" to listOf("очень", "просто", "правда"),
         "все" to listOf("хорошо", "отлично", "будет"),
-        "всё" to listOf("хорошо", "отлично", "понятно")
+        "всё" to listOf("хорошо", "отлично", "понятно"),
+        // частые продолжения в переписке: подсказки следующего слова осмысленны сразу, ещё до обучения
+        "где" to listOf("ты", "вы", "мы"),
+        "когда" to listOf("будешь", "ты", "придёшь"),
+        "почему" to listOf("ты", "не", "так"),
+        "сколько" to listOf("стоит", "времени", "можно"),
+        "можно" to listOf("я", "мне", "ли"),
+        "нужно" to listOf("будет", "было", "что"),
+        "надо" to listOf("будет", "было", "подумать"),
+        "хочу" to listOf("спать", "есть", "тебя"),
+        "буду" to listOf("дома", "через", "ждать"),
+        "будешь" to listOf("дома", "завтра", "сегодня"),
+        "иду" to listOf("домой", "спать", "гулять"),
+        "пойдём" to listOf("гулять", "домой", "завтра"),
+        "скоро" to listOf("буду", "приду", "увидимся"),
+        "уже" to listOf("иду", "дома", "еду"),
+        "еду" to listOf("домой", "на", "в"),
+        "сейчас" to listOf("приду", "буду", "занят"),
+        "потом" to listOf("напишу", "позвоню", "расскажу"),
+        "напиши" to listOf("мне", "когда", "как"),
+        "позвони" to listOf("мне", "когда", "как"),
+        "перезвоню" to listOf("позже", "через", "тебе"),
+        "увидимся" to listOf("завтра", "скоро", "вечером"),
+        "доброй" to listOf("ночи", "ночки"),
+        "приятного" to listOf("аппетита", "вечера", "дня"),
+        "с" to listOf("днём", "праздником", "тобой"),
+        "в" to listOf("общем", "смысле", "итоге"),
+        "на" to listOf("работе", "связи", "улице"),
+        "по" to listOf("дороге", "поводу", "работе"),
+        "до" to listOf("завтра", "встречи", "свидания"),
+        "без" to listOf("проблем", "понятия", "разницы"),
+        "так" to listOf("и", "что", "же"),
+        "ну" to listOf("да", "ладно", "вот"),
+        "да" to listOf("конечно", "нет", "давай"),
+        "нет" to listOf("не", "проблем", "спасибо"),
+        "ладно" to listOf("давай", "хорошо", "пока"),
+        "хорошо" to listOf("давай", "спасибо", "что"),
+        "понятно" to listOf("спасибо", "а", "хорошо"),
+        "конечно" to listOf("да", "можно", "давай"),
+        "извини" to listOf("пожалуйста", "что", "не"),
+        "прости" to listOf("пожалуйста", "меня", "что"),
+        "люблю" to listOf("тебя", "вас", "очень"),
+        "скучаю" to listOf("по", "очень", "тебе"),
+        "жду" to listOf("тебя", "ответа", "встречи"),
+        "думаю" to listOf("что", "о", "да"),
+        "знаю" to listOf("что", "как", "это"),
+        "могу" to listOf("я", "ли", "сегодня"),
+        "был" to listOf("на", "в", "дома"),
+        "была" to listOf("на", "в", "дома"),
+        "этот" to listOf("раз", "день", "момент"),
+        "эта" to listOf("неделя", "тема", "песня"),
+        "сегодня" to listOf("вечером", "не", "буду"),
+        "завтра" to listOf("утром", "вечером", "буду"),
+        "вчера" to listOf("вечером", "был", "была"),
+        "вы" to listOf("где", "когда", "можете"),
+        "они" to listOf("уже", "не", "сказали"),
+        "он" to listOf("сказал", "не", "уже"),
+        "она" to listOf("сказала", "не", "уже"),
+        "тебе" to listOf("нравится", "понравится", "удобно"),
+        "вам" to listOf("удобно", "нужно", "спасибо"),
+        "мой" to listOf("друг", "номер", "адрес"),
+        "моя" to listOf("мама", "подруга", "работа"),
+        "через" to listOf("час", "минут", "пять"),
+        "минут" to listOf("через", "пять", "десять")
     )
 
     private val enBigrams: Map<String, List<String>> = mapOf(
@@ -639,6 +847,12 @@ object WordPredictorEngine {
 
     private fun isCyrillic(c: Char): Boolean = c in 'а'..'я' || c == 'ё'
 
+    /** Вариант системной проверки на алфавите этого языка: английские варианты к русскому слову не нужны. */
+    private fun sameScript(lang: KeyboardLanguage, w: String): Boolean {
+        val c = w.firstOrNull { it.isLetter() }?.lowercaseChar() ?: return false
+        return lang.keyPositions.containsKey(c) || lang.keyPositions.containsKey(baseLetter(c))
+    }
+
     fun ensureInitialized(context: Context) {
         if (started) return
         started = true
@@ -659,8 +873,9 @@ object WordPredictorEngine {
                 parseInto(wordsRaw, userWords)
                 parseInto(bigramsRaw, userBigrams)
             }
-            prepare(app, KeyboardLanguage.RU)
-            prepare(app, KeyboardLanguage.EN)
+            // словари только включённых языков: лишний словарь — это память и полсекунды работы процессора при каждом запуске
+            val enabled = runCatching { Languages.enabled(KeyboardPrefs.current(app)) }.getOrDefault(listOf(KeyboardLanguage.RU, KeyboardLanguage.EN))
+            enabled.forEach { prepare(app, it) }
         }
     }
 
@@ -738,14 +953,30 @@ object WordPredictorEngine {
                     "en" -> EN_SEED.split(' ').forEach { if (it.isNotBlank()) words += it }
                 }
                 pluginWords[lang.id]?.let { words += it.map { w -> w.lowercase() } }
-                dicts[code] = LangDict(words.toList())
+                val main = words.toList()
+                // сначала частые слова — подсказки работают сразу; редкие формы дочитываются следом
+                val dict = LangDict(main)
+                dicts[code] = dict
                 glideCache.remove(code)
                 withContext(Dispatchers.Main) { onDictionaryLoaded?.invoke() }
+                dict.typos = Dictionaries.readTypos(app, code)
+                dict.rare = Dictionaries.readRare(app, code)?.let { RareWords(it, main.size) }
             } finally {
                 loading.remove(code)
             }
         }
         if (lang.dict != null) Dictionaries.ensureAsync(app, lang)
+    }
+
+    /** Словарь без чтения файлов — для проверки качества исправлений на компьютере (app/src/test). */
+    internal fun installDictionary(
+        lang: KeyboardLanguage,
+        words: List<String>,
+        rare: List<Pair<String, Int>> = emptyList(),
+        typos: Map<String, String> = emptyMap()
+    ) {
+        dicts[lang.dict ?: lang.id] = LangDict(words, rare.takeIf { it.isNotEmpty() }?.let { RareWords(it, words.size) }, typos)
+        glideCache.remove(lang.dict ?: lang.id)
     }
 
     fun invalidate(code: String) {
@@ -889,9 +1120,51 @@ object WordPredictorEngine {
 
     /**
      * Незнакомое слово становится «своим» (не исправляется и подсказывается), когда набрано 3 раза
-     * или его явно оставили: отменили исправление ⌫ или выбрали «как есть» — это сразу +3.
+     * или его явно оставили, выбрав «как есть» в подсказках.
      */
     private const val LEARNED = 3
+    /**
+     * Похожее на опечатку частого слова («привит» рядом с «привет») становится своим только после стольких наборов:
+     * раньше одной отмены исправления ⌫ хватало, чтобы опечатка навсегда перестала исправляться.
+     */
+    const val LEARNED_TYPO = 8
+    private val typoLike = ConcurrentHashMap<String, Boolean>()
+
+    /** Слово выучено: набрано достаточно раз (опечатке частого слова — заметно больше). */
+    private fun learned(lang: KeyboardLanguage, lower: String): Boolean {
+        val n = userCount(lang, lower)
+        if (n < LEARNED) return false
+        return n >= LEARNED_TYPO || !looksLikeTypo(lang, lower)
+    }
+
+    /** В одной правке (другая буква, лишняя/пропущенная буква, перестановка) от частого слова словаря. */
+    private fun looksLikeTypo(lang: KeyboardLanguage, lower: String): Boolean = typoLike.getOrPut(uKey(lang, lower)) {
+        val d = dictFor(lang) ?: return@getOrPut false
+        if (lower.length < 3 || d.rankOf(lower) in 0 until 20_000) return@getOrPut false
+        fun frequent(w: String) = d.rank[w]?.let { it < 15_000 } == true
+        val letters = lang.keyPositions.keys.filter { it.isLetter() && it.isLowerCase() }
+        val sb = StringBuilder(lower)
+        for (i in lower.indices) {
+            // лишняя буква
+            if (frequent(lower.removeRange(i, i + 1))) return@getOrPut true
+            // другая буква: соседняя клавиша или созвучная («привит» — «привет»)
+            for (c in letters) {
+                if (c == lower[i]) continue
+                sb.setCharAt(i, c)
+                if (frequent(sb.toString())) return@getOrPut true
+            }
+            sb.setCharAt(i, lower[i])
+            if (i + 1 < lower.length) {
+                val sw = lower.substring(0, i) + lower[i + 1] + lower[i] + lower.substring(i + 2)
+                if (frequent(sw)) return@getOrPut true
+            }
+        }
+        // пропущенная буква
+        for (i in 0..lower.length) for (c in letters) {
+            if (frequent(lower.substring(0, i) + c + lower.substring(i))) return@getOrPut true
+        }
+        false
+    }
 
     /** Словарь для печати свайпом: слово → штраф за редкость (раньше в словаре и чаще набрано — меньше). */
     fun glideLexicon(lang: KeyboardLanguage): List<Pair<String, Float>> {
@@ -902,7 +1175,7 @@ object WordPredictorEngine {
             if (d != null) {
                 for (i in 0 until min(d.size, 20_000)) {
                     val w = d.words[i]
-                    if (w.length >= 2 && w.all { it.isLetter() }) list += w to 0.035f * kotlin.math.ln(1f + i / 4f)
+                    if (w.length >= 2 && w.all { it.isLetter() }) list += w to kotlin.math.ln(1f + i / 20f)
                 }
             }
             if (d != null) glideCache[code] = list
@@ -915,7 +1188,8 @@ object WordPredictorEngine {
             if (!k.startsWith(prefix)) continue
             val w = k.substring(prefix.length)
             if (w.length < 2 || !w.all { it.isLetter() } || (n < LEARNED && w !in out)) continue
-            val pen = max(0f, 0.12f - 0.04f * kotlin.math.ln(1f + n))
+            // выученное слово — как одно из пары сотен самых частых, и тем частотнее, чем чаще набрано
+            val pen = max(0f, 3f - kotlin.math.ln(1f + n))
             out[w] = min(out[w] ?: Float.MAX_VALUE, pen)
         }
         return out.toList()
@@ -923,9 +1197,10 @@ object WordPredictorEngine {
 
     /** Слово знакомо: есть в словаре любого загруженного языка с тем же алфавитом или набрано вами хотя бы дважды. */
     private fun isKnown(lower: String, lang: KeyboardLanguage): Boolean {
-        if (userCount(lang, lower) >= LEARNED || isPersonal(lang, lower)) return true
-        if (dictFor(lang)?.rank?.containsKey(lower) == true) return true
-        for ((_, d) in dicts) if (d.rank.containsKey(lower)) return true
+        if (learned(lang, lower) || isPersonal(lang, lower)) return true
+        val own = dictFor(lang)
+        if (own != null && own.rankOf(lower) >= 0 && own.typos[lower] == null) return true
+        for ((_, d) in dicts) if (d !== own && d.rankOf(lower) >= 0) return true
         return false
     }
 
@@ -938,8 +1213,22 @@ object WordPredictorEngine {
 
     // ---------------------------------------------------------------- опечатки
 
-    /** Исправления, отменённые в этой сессии: такое слово больше не трогаем (даже в режиме инкогнито). */
-    private val rejected = ConcurrentHashMap.newKeySet<String>()
+    /**
+     * Недавно отменённые исправления: слово → до какого времени его не трогать (даже в режиме инкогнито).
+     * Раньше отмена действовала, пока жив процесс клавиатуры (днями) — одна отмена выключала исправление слова.
+     */
+    private val rejectedUntil = ConcurrentHashMap<String, Long>()
+    private const val REJECT_MS = 10 * 60_000L
+
+    /** Для тестов: забыть недавние отмены исправлений. */
+    internal fun clearRejections() = rejectedUntil.clear()
+
+    private fun isRejected(key: String): Boolean {
+        val t = rejectedUntil[key] ?: return false
+        if (System.currentTimeMillis() < t) return true
+        rejectedUntil.remove(key)
+        return false
+    }
     /** Своё исправление уверенное (см. correctionLower). */
     private val confident = ConcurrentHashMap<String, Boolean>()
     /**
@@ -949,7 +1238,7 @@ object WordPredictorEngine {
     private val systemMisses = ConcurrentHashMap<String, MutableSet<String>>()
 
     fun rejectCorrection(lang: KeyboardLanguage, word: String) {
-        rejected += uKey(lang, word.trim().lowercase())
+        rejectedUntil[uKey(lang, word.trim().lowercase())] = System.currentTimeMillis() + REJECT_MS
     }
 
     private fun baseLetter(c: Char): Char {
@@ -965,24 +1254,58 @@ object WordPredictorEngine {
         return abs(pa.first - pb.first) <= 1f && abs(pa.second - pb.second) <= 1.01f
     }
 
-    /** Клавиша выше, чем шире, — по вертикали промахиваются реже. */
-    private const val ROW_SCALE = 1.3f
+    /**
+     * Модель опечаток. Все цены — в «натах» (−ln вероятности), как в Gboard: цена слова = цена ошибок пальца
+     * (по геометрии касаний) + редкость слова − контекст. Слово из словаря сравнивается с тем, что набрано,
+     * на одной шкале, поэтому порог «исправлять или нет» один и понятный. Числа подобраны на проверке
+     * app/src/test (AutocorrectEval): тысячи слов, «напечатанных» с разбросом касаний живого пальца.
+     */
+    internal object Typo {
+        /** Разброс касаний вокруг центра клавиши — в долях её ширины и высоты. */
+        @JvmField var sigmaX = 0.33f
+        @JvmField var sigmaY = 0.25f
+        @JvmField var subFar = 9.4f
+        @JvmField var subNear = 2.8f
+        @JvmField var subSound = 4.0f
+        @JvmField var subAccent = 0.9f
+        @JvmField var subMin = 0.25f
+        @JvmField var del = 6.0f
+        @JvmField var delDouble = 3.4f
+        @JvmField var delNeighbor = 5.0f
+        @JvmField var ins = 3.5f
+        @JvmField var insDouble = 2.0f
+        @JvmField var insSoft = 3.5f
+        @JvmField var swap = 3.2f
+        /** Вес редкости слова: ln(1 + место в частотном списке / lmK). */
+        @JvmField var lmScale = 1.12f
+        @JvmField var lmK = 20f
+        /** Цена «набранное — не опечатка, а незнакомое слово»: базовая и за каждую букву после четвёртой. */
+        @JvmField var keepNormal = 9.45f
+        @JvmField var keepSafe = 7.8f
+        @JvmField var keepPerChar = 0.58f
+        /** Два варианта ближе этого — в осторожном режиме не угадываем. */
+        @JvmField var ambiguousSafe = 1.0f
+        /** Слово из словаря исправляется, только если вариант вероятнее на столько. */
+        @JvmField var knownMargin = 3.0f
+        @JvmField var knownMinRank = 4000
+        @JvmField var split = 6.0f
+    }
 
-    /** Квадрат расстояния (в ширинах клавиши) от касания по клавише typed до центра клавиши target. */
-    private fun touchDist2(lang: KeyboardLanguage, typed: Char, touch: KeyTouch, target: Char): Float {
+    /** −ln P(касание | клавиша target) с точностью до константы: касание по клавише typed со смещением touch. */
+    private fun touchCost(lang: KeyboardLanguage, typed: Char, touch: KeyTouch, target: Char): Float {
         val p = lang.keyPositions[typed] ?: return Float.MAX_VALUE
         val q = lang.keyPositions[target] ?: return Float.MAX_VALUE
-        val dx = p.second + touch.dx - q.second
-        val dy = (p.first + touch.dy - q.first) * ROW_SCALE
-        return dx * dx + dy * dy
+        val dx = (p.second + touch.dx - q.second) / Typo.sigmaX
+        val dy = (p.first + touch.dy - q.first) / Typo.sigmaY
+        return 0.5f * (dx * dx + dy * dy)
     }
 
     /**
      * Буквы, которые путают на слух, а не пальцем: «спосибо», «сигодня», «дила».
-     * Такие ошибки — самые частые в русском, поэтому стоят дешевле промаха по соседней клавише.
+     * Такие ошибки — самые частые в русском, поэтому стоят дешевле промаха по далёкой клавише.
      */
     private val SOUND_ALIKE: Set<String> = buildSet {
-        val ru = listOf("ао", "еи", "ея", "иы", "еэ", "юу", "ёо", "шщ", "ьъ", "зс", "дт", "бп", "вф", "гк", "жш", "цс")
+        val ru = listOf("ао", "еи", "ея", "иы", "еэ", "юу", "ёо", "шщ", "ьъ", "зс", "дт", "бп", "вф", "гк", "жш", "цс", "ия")
         val latin = listOf("ae", "ei", "io", "ou", "ua", "ai", "eo", "yi", "ck", "cs", "sz", "sc")
         for (p in ru + latin) {
             add(p)
@@ -992,52 +1315,63 @@ object WordPredictorEngine {
 
     private fun soundAlike(a: Char, b: Char) = "$a$b" in SOUND_ALIKE
 
+    /** Мягкие буквы, которые чаще всего пропускают при быстром наборе. */
+    private fun softLetter(c: Char) = c == 'ь' || c == 'ъ' || c == 'й' || c == '\'' || c == '-'
+
     /**
-     * Цена замены набранной буквы a на b. Если известно, куда попал палец, решает геометрия, как в Gboard:
-     * касание у границы «а» и «о» делает замену почти бесплатной, удар точно в центр «а» — дорогой.
+     * Цена того, что вместо b нажали a. Если известно, куда попал палец, решает геометрия: касание у границы
+     * «а» и «о» делает замену почти бесплатной, удар точно в центр «а» — дорогой.
      */
     private fun subCost(lang: KeyboardLanguage, a: Char, b: Char, touch: KeyTouch?): Float {
         if (a == b) return 0f
-        if (baseLetter(a) == baseLetter(b)) return 0.15f
-        val sound = if (soundAlike(a, b)) 0.45f else 1f
+        if (baseLetter(a) == baseLetter(b)) return Typo.subAccent
+        val sound = if (soundAlike(a, b)) Typo.subSound else Typo.subFar
         if (touch != null && lang.keyPositions.containsKey(a) && lang.keyPositions.containsKey(b)) {
-            val spatial = 0.1f + 0.6f * (touchDist2(lang, a, touch, b) - touchDist2(lang, a, touch, a))
-            return min(sound, spatial.coerceIn(0.1f, 1f))
+            val spatial = touchCost(lang, a, touch, b) - touchCost(lang, a, touch, a)
+            return min(sound, spatial.coerceIn(Typo.subMin, Typo.subFar))
         }
-        return min(sound, if (adjacent(lang, a, b)) 0.55f else 1f)
+        return min(sound, if (adjacent(lang, a, b)) Typo.subNear else Typo.subFar)
     }
 
-    /** Взвешенное расстояние Дамерау–Левенштейна: typed → dict, с ранним выходом после limit. */
+    /** Цена превращения набранного typed в слово dict (взвешенное расстояние Дамерау–Левенштейна), выход после limit. */
     private fun editCost(lang: KeyboardLanguage, typed: String, dict: String, limit: Float, touches: List<KeyTouch?>?): Float {
         val n = typed.length
         val m = dict.length
         if (n > 30 || m > 30) return Float.MAX_VALUE
         var prev2 = FloatArray(m + 1)
         var prev = FloatArray(m + 1)
-        for (j in 1..m) prev[j] = prev[j - 1] + if (j >= 2 && dict[j - 1] == dict[j - 2]) 0.45f else 0.8f
+        // пропущенная буква: удвоенную («класный» → «классный») и мягкий знак пропускают чаще всего
+        val insCost = FloatArray(m + 1)
+        for (j in 1..m) {
+            val b = dict[j - 1]
+            insCost[j] = when {
+                j >= 2 && dict[j - 2] == b -> Typo.insDouble
+                softLetter(b) -> Typo.insSoft
+                else -> Typo.ins
+            }
+            prev[j] = prev[j - 1] + insCost[j]
+        }
         var cur = FloatArray(m + 1)
         // перестановка смотрит на два ряда назад — выходим, только если оба ряда уже дороже лимита
         var prevMin = 0f
         for (i in 1..n) {
-            cur[0] = i * 0.85f
-            var rowMin = cur[0]
             val a = typed[i - 1]
             val touch = touches?.getOrNull(i - 1)
             // лишняя буква: дешевле, если это дубль или соседняя клавиша (задели две сразу)
             val delCost = when {
-                i >= 2 && typed[i - 2] == a -> 0.45f
-                i >= 2 && adjacent(lang, typed[i - 2], a) -> 0.6f
-                else -> 0.85f
+                i >= 2 && typed[i - 2] == a -> Typo.delDouble
+                (i >= 2 && adjacent(lang, typed[i - 2], a)) || (i < n && adjacent(lang, typed[i], a)) -> Typo.delNeighbor
+                else -> Typo.del
             }
+            cur[0] = prev[0] + delCost
+            var rowMin = cur[0]
             for (j in 1..m) {
                 val b = dict[j - 1]
-                // пропущенная буква: удвоенную («класный» → «классный») пропускают чаще всего
-                val insCost = if (j >= 2 && dict[j - 2] == b) 0.45f else 0.8f
                 var v = min(
                     prev[j - 1] + subCost(lang, a, b, touch),
-                    min(prev[j] + delCost, cur[j - 1] + insCost)
+                    min(prev[j] + delCost, cur[j - 1] + insCost[j])
                 )
-                if (i >= 2 && j >= 2 && a == dict[j - 2] && typed[i - 2] == b) v = min(v, prev2[j - 2] + 0.5f)
+                if (i >= 2 && j >= 2 && a == dict[j - 2] && typed[i - 2] == b) v = min(v, prev2[j - 2] + Typo.swap)
                 cur[j] = v
                 if (v < rowMin) rowMin = v
             }
@@ -1048,23 +1382,78 @@ object WordPredictorEngine {
         return prev[m]
     }
 
-    /** Штраф за редкость слова: чем дальше от начала частотного списка, тем дороже. */
-    private fun freqCost(rank: Int): Float = 0.15f * kotlin.math.ln(1f + rank / 30f)
+    /** Редкость слова: −ln частоты по закону Ципфа, с точностью до константы. */
+    private fun freqCost(rank: Int): Float = Typo.lmScale * kotlin.math.ln(1f + rank / Typo.lmK)
 
     /** Бонус за то, что слово часто идёт после предыдущего («доброе» → «утро»). */
     private fun contextBonus(lang: KeyboardLanguage, prev: String, w: String): Float {
         if (prev.isEmpty()) return 0f
         var bonus = 0f
         val n = userBigrams["${lang.id}:$prev|$w"] ?: 0
-        if (n > 0) bonus += min(0.6f, 0.25f * kotlin.math.ln(1f + n))
+        if (n > 0) bonus += min(2.5f, 0.9f + 0.6f * kotlin.math.ln(1f + n))
         val builtin = when (lang.id) {
             "ru" -> ruBigrams[prev]
             "en" -> enBigrams[prev]
             else -> null
         }
-        if (builtin?.contains(w) == true) bonus += 0.3f
+        if (builtin?.contains(w) == true) bonus += 1.2f
         return bonus
     }
+
+    private val nextCache = object : LinkedHashMap<String, Map<Char, Float>>(64, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Map<Char, Float>>?) = size > 96
+    }
+
+    fun cachedNextLetters(lang: KeyboardLanguage, prefix: String): Map<Char, Float>? =
+        synchronized(nextCache) { nextCache["${lang.id}:${prefix.lowercase()}"] }
+
+    /**
+     * ln P(следующая буква | начало слова) по частотному словарю и вашим словам — для динамических зон клавиш.
+     * Пусто — такого начала в словаре нет (имя, сленг): тогда зоны ничего не сдвигают.
+     */
+    fun nextLetters(lang: KeyboardLanguage, prefix: String): Map<Char, Float> {
+        val p = prefix.lowercase()
+        val key = "${lang.id}:$p"
+        cachedNextLetters(lang, p)?.let { return it }
+        val d = dictFor(lang)
+        if (d == null || d.size < 3000) return emptyMap()
+        val weights = HashMap<Char, Float>()
+        var lo = 0
+        var hi = d.sorted.size
+        while (lo < hi) {
+            val mid = (lo + hi) ushr 1
+            if (d.sorted[mid] < p) lo = mid + 1 else hi = mid
+        }
+        var i = lo
+        while (i < d.sorted.size && d.sorted[i].startsWith(p)) {
+            val w = d.sorted[i]
+            if (w.length > p.length) {
+                val r = d.rank[w] ?: Int.MAX_VALUE / 2
+                val c = w[p.length]
+                weights[c] = (weights[c] ?: 0f) + 1f / (r + 30f)
+            }
+            i++
+        }
+        val prefixKey = "${lang.id}:$p"
+        for ((k, n) in userWords) {
+            if (n < LEARNED || k.length <= prefixKey.length || !k.startsWith(prefixKey)) continue
+            val c = k[prefixKey.length]
+            weights[c] = (weights[c] ?: 0f) + 0.01f * n
+        }
+        val total = weights.values.sum()
+        val out = if (total <= 0f) emptyMap() else weights.mapValues { (_, v) -> kotlin.math.ln(v / total) }
+        synchronized(nextCache) { nextCache[key] = out }
+        return out
+    }
+
+    /** Бонус слову свайпа за предыдущее слово («доброе» → «утро»). */
+    fun glideContext(lang: KeyboardLanguage, previous: String): (String) -> Float {
+        val p = previous.trim().lowercase()
+        return { w -> if (p.isEmpty()) 0f else contextBonus(lang, p, w) }
+    }
+
+    /** Свои слова: набранное много раз дешевле. */
+    private fun userBonus(lang: KeyboardLanguage, w: String): Float = 0.8f * kotlin.math.ln(1f + userCount(lang, w))
 
     private class Candidate(val word: String, val cost: Float, val score: Float, val rank: Int)
 
@@ -1079,7 +1468,7 @@ object WordPredictorEngine {
         if (cancelCheck.get()?.invoke() == true) throw Cancelled()
     }
 
-    /** Ближайшие слова словаря к набранному (с первой буквой, её соседями или переставленной второй). */
+    /** Ближайшие слова словаря к набранному: score = цена ошибок + редкость − контекст (меньше — вероятнее). */
     private fun nearWords(
         lower: String,
         lang: KeyboardLanguage,
@@ -1098,18 +1487,43 @@ object WordPredictorEngine {
         d.similar(lower, idx)
         val plain = lower.map(::baseLetter).joinToString("")
         if (plain != lower) d.similar(plain, idx)
+        // две ошибки пальцем («скпзатб» → «сказать») индекс с одной удалённой буквой не находит:
+        // ищем ещё от вариантов набранного, где одна буква заменена правдоподобной соседней
+        if (lower.length >= 3) {
+            val chars = lower.toCharArray()
+            for (i in chars.indices) {
+                val a = chars[i]
+                for (c in plausibleKeys(lang, a, touches?.getOrNull(i))) {
+                    chars[i] = c
+                    d.similarNear(String(chars), idx)
+                }
+                chars[i] = a
+            }
+        }
         checkCancelled()
         for (i in idx) {
             val w = d.words[i]
             if (abs(w.length - lower.length) > maxLenDiff || w == lower) continue
             val cost = editCost(lang, lower, w, maxCost, touches)
             if (cost > maxCost) continue
-            val uc = userCount(lang, w)
-            val score = cost + freqCost(i) - 0.12f * kotlin.math.ln(1f + uc) - contextBonus(lang, p, w)
+            val score = cost + freqCost(i) - userBonus(lang, w) - contextBonus(lang, p, w)
             best += Candidate(w, cost, score, i)
         }
         best.sortBy { it.score }
         return best.distinctBy { it.word }.take(limit)
+    }
+
+    /** Клавиши, которые палец мог иметь в виду вместо нажатой a: соседние (по касанию — только близкие) и похожие на слух. */
+    private fun plausibleKeys(lang: KeyboardLanguage, a: Char, touch: KeyTouch?): List<Char> {
+        val out = ArrayList<Char>(6)
+        for (c in lang.keyPositions.keys) {
+            if (c == a || !c.isLetter()) continue
+            val ok = if (adjacent(lang, a, c)) {
+                touch == null || touchCost(lang, a, touch, c) - touchCost(lang, a, touch, a) < 5f
+            } else soundAlike(a, c)
+            if (ok) out += c
+        }
+        return out
     }
 
     /** Однобуквенные слова, которые можно отделить пропущенным пробелом. */
@@ -1136,19 +1550,24 @@ object WordPredictorEngine {
             if (r.length == 1 && !singleLetterWord(lang, r)) continue
             val rl = d.rank[l]?.takeIf { it <= maxRank } ?: continue
             val rr = d.rank[r]?.takeIf { it <= maxRank } ?: continue
-            val score = 0.5f + freqCost(rl) + freqCost(rr) - contextBonus(lang, l, r)
+            val score = Typo.split + freqCost(rl) + freqCost(rr) - contextBonus(lang, l, r)
             if (score < bestScore) {
                 bestScore = score
                 bestText = "$l $r"
             }
         }
         val text = bestText ?: return null
-        return if (bestScore <= (if (normal) 1.9f else 1.4f)) text to bestScore else null
+        return text to bestScore
     }
 
+    /** Цена того, что набранное — не опечатка, а слово, которого нет в словаре (имя, сленг, новое слово). */
+    private fun keepCost(len: Int, normal: Boolean): Float =
+        (if (normal) Typo.keepNormal else Typo.keepSafe) + Typo.keepPerChar * max(0, len - 4)
+
     /**
-     * Автоисправление незнакомого слова: лучший вариант по сумме «цена опечатки + редкость − контекст».
-     * Касания учитываются — промах у края клавиши исправляется уверенно, а точное попадание почти никогда.
+     * Автоисправление незнакомого слова: лучший вариант по сумме «цена опечатки + редкость − контекст»,
+     * если он вероятнее, чем «это не опечатка, а незнакомое слово». Касания учитываются — промах у края
+     * клавиши исправляется уверенно, а точное попадание почти никогда.
      */
     private fun correctionLower(
         lower: String,
@@ -1158,48 +1577,38 @@ object WordPredictorEngine {
         touches: List<KeyTouch?>?
     ): String? {
         if (lower.length < 2 || lower.any { !it.isLetter() && it != '\'' && it != '-' }) return null
-        if (lang.id == "ru") ruTypos[lower]?.let { return it }
-        if (lang.id == "en") enTypos[lower]?.let { return it }
-        if (lower.length < 3 || !lang.autoCorrect || !hasDictionary(lang)) return null
+        if (!lang.autoCorrect || !hasDictionary(lang)) return null
+        // DUO: агрессивный режим — как «активный», но с расширенным бюджетом опечаток (2–3 буквы)
         val aggressive = strength == "AGGRESSIVE"
         val normal = strength == "NORMAL" || aggressive
         val hasTouch = touches?.any { it != null } == true
         val len = lower.length
-        // короткие слова часто сленг и сокращения («спс», «оч»): без данных о касаниях осторожный режим их не трогает
-        val maxCost = when {
-            aggressive -> when {
-                len <= 3 -> 0.95f
-                len <= 5 -> 1.85f
-                len <= 7 -> 2.65f
-                else -> 3.35f
-            }
-            len == 3 -> if (normal) 0.5f else if (hasTouch) 0.4f else return null
-            len == 4 -> if (normal) 0.85f else 0.65f
-            len <= 7 -> if (normal) 1.35f else 1.05f
-            else -> if (normal) 1.9f else 1.5f
+        // короткие слова часто сленг и сокращения («спс», «оч»): без данных о касаниях их не трогаем
+        if (!aggressive) {
+            if (len == 2 && (!normal || !hasTouch)) return null
+            if (len == 3 && !normal && !hasTouch) return null
         }
-        val maxRank = when {
-            aggressive -> 100_000
-            len == 3 -> if (normal) 8_000 else 3_000
-            len == 4 -> if (normal) 25_000 else 10_000
-            else -> if (normal) 40_000 else 25_000
-        }
-        val cands = nearWords(lower, lang, maxCost, 4, prev, touches)
-            .filter { it.rank <= maxRank || userCount(lang, it.word) >= LEARNED }
+        var keep = keepCost(len, normal)
+        // DUO: агрессивный режим прощает более дорогие опечатки и редкие замены
+        if (aggressive) keep += 3.2f
+        // двухбуквенное — только явный промах мимо очень частого слова («мв» → «мы»)
+        if (len == 2) keep -= 3.5f
+        val cands = nearWords(lower, lang, keep + 1f, 4, prev, touches)
+            .filter { if (len == 2) it.word.length == 2 && it.rank < (if (aggressive) 2_000 else 400) else true }
         val best = cands.firstOrNull()
         val split = splitWords(lower, lang, normal)
-        if (split != null && (best == null || split.second < best.score)) return split.first
-        if (best == null) return null
+        if (split != null && split.second <= keep && (best == null || split.second < best.score)) return split.first
+        if (best == null || best.score > keep) return null
         val second = cands.getOrNull(1)
         // в осторожном режиме два почти равных варианта — не угадываем
-        if (second != null && second.score - best.score < (if (normal) 0.05f else 0.15f) && second.cost <= best.cost + 0.1f) return null
-        // уверенное исправление: одна дешёвая ошибка и частое слово — его не отменяет системная проверка
-        confident[uKey(lang, lower)] = best.cost <= 0.7f && best.rank <= 20_000 && (second == null || second.score - best.score >= 0.25f)
+        if (!normal && second != null && second.score - best.score < Typo.ambiguousSafe) return null
+        // уверенное исправление — его не отменяет системная проверка
+        confident[uKey(lang, lower)] = keep - best.score >= 3f && (second == null || second.score - best.score >= 1.5f)
         return best.word
     }
 
     /**
-     * Слово есть в словаре, но очень редкое, а палец явно промахнулся мимо частого соседа.
+     * Слово есть в словаре, но редкое, а палец явно промахнулся мимо частого соседа («люби» в центре «д»).
      * Срабатывает только при данных о касаниях и только если вы сами это слово никогда не набирали.
      */
     private fun rareWordFix(
@@ -1213,12 +1622,45 @@ object WordPredictorEngine {
         if (!lang.autoCorrect || !hasDictionary(lang) || userCount(lang, lower) > 0 || isPersonal(lang, lower)) return null
         if (lower.any { !it.isLetter() }) return null
         val d = dictFor(lang) ?: return null
-        val r = d.rank[lower] ?: return null
-        val normal = strength == "NORMAL"
-        if (r < (if (normal) 12_000 else 20_000)) return null
-        val best = nearWords(lower, lang, if (normal) 0.4f else 0.32f, 2, prev, touches).firstOrNull() ?: return null
-        if (best.rank * 20 > r) return null
-        return if (freqCost(r) - best.score >= (if (normal) 0.3f else 0.45f)) best.word else null
+        val r = d.rankOf(lower).takeIf { it >= 0 } ?: return null
+        // DUO: агрессивный режим считаем «активным»
+        val normal = strength == "NORMAL" || strength == "AGGRESSIVE"
+        if (r < (if (normal) Typo.knownMinRank else Typo.knownMinRank * 2)) return null
+        val margin = if (normal) Typo.knownMargin else Typo.knownMargin + 1.5f
+        val keep = freqCost(r) - contextBonus(lang, prev, lower)
+        val best = nearWords(lower, lang, keep - margin, 2, prev, touches).firstOrNull() ?: return null
+        return if (keep - best.score >= margin) best.word else null
+    }
+
+    /**
+     * Одна буква, которая словом не бывает («т» между словами): палец промахнулся мимо соседней «и».
+     * Только активный режим и только если касание было у границы с этой буквой.
+     */
+    private fun singleLetterFix(clean: String, lang: KeyboardLanguage, strength: String, touch: KeyTouch?): String? {
+        if ((strength != "NORMAL" && strength != "AGGRESSIVE") || touch == null || !lang.autoCorrect || !hasDictionary(lang)) return null
+        val c = clean[0]
+        val lower = c.lowercaseChar()
+        if (!lower.isLetter() || singleLetterWord(lang, lower.toString())) return null
+        if (isRejected(uKey(lang, lower.toString()))) return null
+        val singles = when (lang.id) {
+            "ru" -> RU_SINGLE.map { it[0] }
+            "en" -> listOf('a', 'i')
+            else -> return null
+        }
+        val best = singles.minByOrNull { subCost(lang, lower, it, touch) } ?: return null
+        if (subCost(lang, lower, best, touch) > 2.5f) return null
+        return if (c.isUpperCase() || (lang.id == "en" && best == 'i')) best.uppercase() else best.toString()
+    }
+
+    /** Исправление из таблицы частых ошибок (встроенной и из словаря языка). */
+    private fun typoFix(lang: KeyboardLanguage, lower: String): String? {
+        val fix = when (lang.id) {
+            "ru" -> ruTypos[lower]
+            "en" -> enTypos[lower]
+            else -> null
+        } ?: dictFor(lang)?.typos?.get(lower) ?: return null
+        if (learned(lang, lower) || isPersonal(lang, lower)) return null
+        return fix
     }
 
     fun autoCorrectionFor(
@@ -1229,6 +1671,7 @@ object WordPredictorEngine {
         touches: List<KeyTouch?>? = null
     ): String? {
         val clean = word.trim()
+        if (clean.length == 1) return singleLetterFix(clean, lang, strength, touches?.singleOrNull())
         if (clean.length < 2) return null
         if (clean.any { it.isDigit() }) return null
         // аббревиатуры и слова с заглавной внутри (iPhone, ООО) не трогаем
@@ -1236,11 +1679,13 @@ object WordPredictorEngine {
         // «кто-» или «rock'» — слово ещё не дописано, а не опечатка
         if (clean.last() == '-' || clean.last() == '\'') return null
         val lower = clean.lowercase()
-        if (uKey(lang, lower) in rejected) return null
+        if (isRejected(uKey(lang, lower))) return null
         val t = touches?.takeIf { it.size == clean.length }
         val prev = previous.trim().lowercase()
-        val fix = if (isKnown(lower, lang)) rareWordFix(lower, lang, strength, prev, t)
-        else correctionLower(lower, lang, strength, prev, t)
+        // частая ошибка написания («пожалуста», «извени») — сразу, если вы сами так не пишете
+        val fix = typoFix(lang, lower)
+            ?: if (isKnown(lower, lang)) rareWordFix(lower, lang, strength, prev, t)
+            else correctionLower(lower, lang, strength, prev, t)
         fix ?: return null
         return applyCase(fix, clean.first().isUpperCase(), clean.length > 1 && clean.all { it.isUpperCase() })
     }
@@ -1257,13 +1702,8 @@ object WordPredictorEngine {
         val lower = clean.lowercase()
         // слово другой письменности (английское на русской раскладке) системная проверка этого языка не поймёт
         if (!lang.keyPositions.containsKey(lower[0])) return own
-        if (uKey(lang, lower) in rejected || userCount(lang, lower) >= LEARNED || isPersonal(lang, lower)) return own
-        val table = when (lang.id) {
-            "ru" -> ruTypos[lower]
-            "en" -> enTypos[lower]
-            else -> null
-        }
-        if (table != null) return own
+        if (isRejected(uKey(lang, lower)) || learned(lang, lower) || isPersonal(lang, lower)) return own
+        if (typoFix(lang, lower) != null) return own
         if ((systemMisses[lang.id]?.size ?: 0) >= 3) return own
         if (!sys.typo) {
             if (own != null && confident[uKey(lang, lower)] == true) {
@@ -1272,19 +1712,19 @@ object WordPredictorEngine {
             }
             return null
         }
-        val first = sys.suggestions.firstOrNull() ?: return own
+        val first = sys.suggestions.firstOrNull { sameScript(lang, it) } ?: return own
         val cap = clean.first().isUpperCase()
         val allCaps = clean.length > 1 && clean.all { it.isUpperCase() }
         if (own != null && sys.suggestions.take(3).any { it.equals(own, ignoreCase = true) }) return own
         if (sys.recommended) return applyCase(first, cap, allCaps)
         if (own != null) return own
         // слово из своего словаря без уверенной рекомендации не трогаем
-        if (strength != "NORMAL" || lower.length < 3 || isKnown(lower, lang)) return null
+        if ((strength != "NORMAL" && strength != "AGGRESSIVE") || lower.length < 3 || isKnown(lower, lang)) return null
         // без рекомендации первый вариант берём, только если это действительно близкая опечатка
         val limit = when {
-            lower.length <= 4 -> 0.9f
-            lower.length <= 7 -> 1.4f
-            else -> 1.9f
+            lower.length <= 4 -> 4.5f
+            lower.length <= 7 -> 7f
+            else -> 9.5f
         }
         return if (editCost(lang, lower, first.lowercase(), limit, null) <= limit) applyCase(first, cap, allCaps) else null
     }
@@ -1371,7 +1811,9 @@ object WordPredictorEngine {
         val own = if (autoCorrect) autoCorrectionFor(clean, lang, strength, previous, touches) else null
         val fix = if (autoCorrect) mergeSystem(clean, own, sys, lang, strength) else null
         // варианты системной проверки — когда она считает слово опечаткой
-        val sysAlt = if (sys != null && sys.typo) sys.suggestions.map { applyCase(it, cap, allCaps) }.filter { it != clean && it != fix } else emptyList()
+        val sysAlt = if (sys != null && sys.typo) {
+            sys.suggestions.filter { sameScript(lang, it) }.map { applyCase(it, cap, allCaps) }.filter { it != clean && it != fix }
+        } else emptyList()
         val comps = completions(lower, lang, 3).map { applyCase(it, cap, allCaps) }.filter { it != clean && it != fix }
 
         val chips = when {
@@ -1398,7 +1840,7 @@ object WordPredictorEngine {
             )
             else -> {
                 // похожие слова — только как подсказки, без замены по пробелу
-                val near = if (clean.length >= 3) nearWords(lower, lang, 1.4f, 2, previous, touches?.takeIf { it.size == clean.length }).map { applyCase(it.word, cap, allCaps) } else emptyList()
+                val near = if (clean.length >= 3) nearWords(lower, lang, 9f, 2, previous, touches?.takeIf { it.size == clean.length }).map { applyCase(it.word, cap, allCaps) } else emptyList()
                 listOf(
                     near.getOrNull(0)?.let { SuggestionChipModel(it, it) } ?: SuggestionChipModel.EMPTY,
                     SuggestionChipModel(clean, clean, isPrimary = true, isKeepExact = true),
@@ -1421,7 +1863,7 @@ object WordPredictorEngine {
     ): String? {
         if (lower.length < 3) return null
         val t = touches?.takeIf { it.size == lower.length }
-        return nearWords(lower, lang, 1.4f, 3, previous.trim().lowercase(), t)
+        return nearWords(lower, lang, 9f, 3, previous.trim().lowercase(), t)
             .map { applyCase(it.word, cap, allCaps) }
             .firstOrNull { !it.equals(fix, ignoreCase = true) }
     }

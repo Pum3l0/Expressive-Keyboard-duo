@@ -30,6 +30,7 @@ import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.BitSet
@@ -80,11 +81,24 @@ object EmojiCatalog {
     @Volatile private var indices: Map<String, Int> = emptyMap()
     @Volatile private var items: Map<String, EmojiItem> = emptyMap()
 
-    fun warmUp(context: Context) {
+    /** Панель эмодзи открыта — грузить сейчас же, без отсрочки. */
+    @Volatile private var urgent = false
+
+    /**
+     * Каталог (≈3800 эмодзи с проверкой, какие умеет рисовать система) собирается в фоне. При запуске клавиатуры —
+     * с отсрочкой, чтобы не мешать первым нажатиям; если панель эмодзи открыли раньше — сразу.
+     */
+    fun warmUp(context: Context, now: Boolean = false) {
+        if (now) urgent = true
         if (started) return
         started = true
         val app = context.applicationContext
         scope.launch {
+            var waited = 0
+            while (!urgent && waited < 4000) {
+                delay(100)
+                waited += 100
+            }
             val list = runCatching { load(app) }.getOrDefault(emptyList())
             withContext(Dispatchers.Main) { categories = list }
         }

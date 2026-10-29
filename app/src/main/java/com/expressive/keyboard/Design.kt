@@ -21,6 +21,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -71,7 +72,10 @@ enum class DesignStyle(
         "builtin.classic", ExpressiveShapePreset.CIRCLE, "SYSTEM", 6f, 400
     ),
     NEON("NEON", "Неон", "Почти чёрный фон, тонкие светящиеся контуры", "builtin.neon", ExpressiveShapePreset.CIRCLE, "SYSTEM", 10f, 500),
-    NEUMORPH("NEUMORPH", "Неоморфизм", "Мягкие выпуклые клавиши из материала фона", "builtin.neumorph", ExpressiveShapePreset.CIRCLE, "ROUNDED", 14f, 600);
+    NEUMORPH("NEUMORPH", "Неоморфизм", "Мягкие выпуклые клавиши из материала фона", "builtin.neumorph", ExpressiveShapePreset.CIRCLE, "ROUNDED", 14f, 600),
+    MINECRAFT("MINECRAFT", "Minecraft", "Каменные кнопки из пикселей, земля, пиксельный шрифт и зелёный Enter", "builtin.minecraft", ExpressiveShapePreset.CIRCLE, "SYSTEM", 0f, 500),
+    SAMSUNG("SAMSUNG", "Samsung One UI", "Плоские светлые клавиши и синий акцент, как у клавиатуры Samsung", "builtin.samsung", ExpressiveShapePreset.CIRCLE, "SYSTEM", 9f, 400),
+    NOTHING("NOTHING", "Nothing", "Монохром, буквы и контуры из точек, красный Enter", "builtin.nothing", ExpressiveShapePreset.CIRCLE, "ROUNDED", 14f, 700);
 
     fun apply(context: Context) {
         if (skin.isNotEmpty() && !PluginRepository.isEnabled(skin)) PluginRepository.setEnabled(context, skin, true)
@@ -96,14 +100,15 @@ enum class DesignStyle(
 internal fun DesignPicker(settings: KeyboardSettings) {
     val context = LocalContext.current
     val cs = MaterialTheme.colorScheme
-    val current = DesignStyle.fromId(settings.designStyle)
-    val dark = cs.surface.luminance() < 0.5f
+    val dark = keyboardIsDark(settings)
     Row(
         Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(12.dp),
         horizontalArrangement = Arrangement.spacedBy(10.dp)
     ) {
         DesignStyle.entries.forEach { d ->
-            val sel = d == current
+            // выбрана та, чьё оформление стоит сейчас (своя тема — ни одна из этих)
+            val sel = settings.skinPlugin == d.skin
+            val plugin = PluginRepository.plugins.firstOrNull { it.id == d.skin }
             val corner by animateDpAsState(if (sel) 28.dp else 18.dp, spring(dampingRatio = 0.6f, stiffness = 500f), label = "designCorner")
             val bg by animateColorAsState(if (sel) cs.primaryContainer else cs.surfaceContainerHigh, label = "designBg")
             Column(
@@ -112,8 +117,15 @@ internal fun DesignPicker(settings: KeyboardSettings) {
                     .clickable { d.apply(context) }.padding(10.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Canvas(Modifier.fillMaxWidth().height(78.dp).clip(RoundedCornerShape(14.dp))) {
-                    drawMiniKeyboard(d, dark, cs.primary, cs.surfaceContainer, cs.surfaceBright, cs.secondaryContainer)
+                if (plugin?.skin != null) {
+                    val skin = remember(plugin, settings.skinOptions, settings.userAccent, settings.colorAccentText, settings.keyOpacity, dark) {
+                        runCatching { ThemeOptions.build(plugin, plugin.skin, ThemeOptions.values(settings, plugin.id), settings, dark) }.getOrNull()
+                    }
+                    SkinMiniPreview(skin, settings, Modifier.fillMaxWidth().height(78.dp))
+                } else {
+                    Canvas(Modifier.fillMaxWidth().height(78.dp).clip(RoundedCornerShape(14.dp))) {
+                        drawMiniKeyboard(d, dark, cs.primary, cs.surfaceContainer, cs.surfaceBright, cs.secondaryContainer)
+                    }
                 }
                 Text(
                     tr(d.title), style = MaterialTheme.typography.titleSmall,

@@ -149,6 +149,7 @@ object FontRepository {
         "SYSTEM" -> FontFamily.SansSerif
         "SERIF" -> FontFamily.Serif
         "MONOSPACE" -> FontFamily.Monospace
+        "PIXEL" -> pixel
         "CUSTOM" -> custom(context, s.customFontVersion) ?: bundled(context) ?: FontFamily.SansSerif
         else -> bundled(context) ?: FontFamily.SansSerif
     }
@@ -172,6 +173,15 @@ object FontRepository {
             }.getOrNull()
         }
         return bundled
+    }
+
+    /** Пиксельный шрифт (Pixelify Sans, OFL): тема Minecraft и выбор «Пиксели» в настройках шрифта. */
+    val pixel: FontFamily by lazy {
+        FontFamily(
+            listOf(400, 500, 600, 700).map { w ->
+                Font(R.font.pixelify, FontWeight(w), variationSettings = FontVariation.Settings(FontVariation.weight(w)))
+            }
+        )
     }
 
     private var emojiVersion = -1L
