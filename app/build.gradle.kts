@@ -67,6 +67,8 @@ android {
         }
         debug {
             signingConfig = signingConfigs.getByName("debug")
+            // DUO: отладочная сборка ставится рядом с релизной отдельным приложением
+            applicationIdSuffix = ".debug"
         }
     }
 
