@@ -616,6 +616,8 @@ internal fun KeyView(
                                 }
                             }
                             KeyType.SHIFT -> {
+                                // DUO: запоминаем, что Shift реально держат пальцем — только тогда работает выделение
+                                act.shiftHold(true)
                                 // Shift — в момент касания, как в Gboard: при быстром наборе палец уже жмёт букву,
                                 // пока Shift ещё не отпущен, и раньше заглавная терялась
                                 act.commitKey(k, cOutput)
@@ -623,6 +625,7 @@ internal fun KeyView(
                                     val ch = awaitPointerEvent().changes.firstOrNull { it.id == id } ?: break
                                     if (!ch.pressed) break
                                 }
+                                act.shiftHold(false)
                             }
                             KeyType.SPACE -> {
                                 val mode = cSettings.spaceSwipe

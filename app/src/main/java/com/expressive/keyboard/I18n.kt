@@ -491,6 +491,7 @@ internal val EN_STRINGS: Map<String, String> = hashMapOf(
     "ИИ по вашему ключу" to "AI with your key",
     "Автор:" to "Author:",
     "Канал:" to "Channel:",
+    "Форк:" to "Fork:",
     "Обновления" to "Updates",
     "Проверить обновления" to "Check for updates",
     "Проверяю…" to "Checking…",

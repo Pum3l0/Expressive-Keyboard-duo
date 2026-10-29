@@ -2121,7 +2121,7 @@ internal fun ModConfigEditor(p: KeyboardPlugin) {
     }
 }
 
-/** Автор и канал — синие ссылки на Telegram. */
+/** Автор, канал и форк — синие ссылки на Telegram. */
 @Composable
 internal fun AuthorLine() {
     val context = LocalContext.current
@@ -2129,22 +2129,30 @@ internal fun AuthorLine() {
     fun open(url: String) {
         runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
     }
-    Row(
+    @Composable
+    fun link(text: String, url: String) {
+        Text(
+            text, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold, color = blue,
+            modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable { open(url) }.padding(horizontal = 4.dp, vertical = 2.dp)
+        )
+    }
+    Column(
         Modifier.fillMaxWidth().padding(horizontal = 4.dp),
-        horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally),
-        verticalAlignment = Alignment.CenterVertically
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(2.dp)
     ) {
-        Text(tr("Автор:"), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Text(
-            "@Shahedeer", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold, color = blue,
-            modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable { open("https://t.me/Shahedeer") }.padding(horizontal = 4.dp, vertical = 2.dp)
-        )
-        Text("·", color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Text(tr("Канал:"), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Text(
-            "@materialyouboss", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold, color = blue,
-            modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable { open("https://t.me/materialyouboss") }.padding(horizontal = 4.dp, vertical = 2.dp)
-        )
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text(tr("Автор:"), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            link("@Shahedeer", "https://t.me/Shahedeer")
+            Text("·", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(tr("Канал:"), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            link("@materialyouboss", "https://t.me/materialyouboss")
+        }
+        // DUO: форк Expressive Keyboard Duo
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text(tr("Форк:"), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            link("@pumeloo", "https://t.me/pumeloo")
+        }
     }
 }
 

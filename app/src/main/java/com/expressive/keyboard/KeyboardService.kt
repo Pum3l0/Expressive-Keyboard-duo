@@ -207,6 +207,8 @@ interface KeyboardActions {
     /** DUO: горизонтальный сдвиг курсора без оглядки на настройку «свайп по пробелу». */
     fun moveCursorHorizontal(direction: Int) {}
     fun triggerCreasePulse() {}
+    /** DUO: Shift реально держат пальцем (не Caps Lock) — только тогда трекпад выделяет текст. */
+    fun shiftHold(held: Boolean) {}
     fun pickSuggestion(chip: SuggestionChipModel)
     fun commitText(text: String)
     fun commitEmoji(emoji: String)
@@ -283,6 +285,7 @@ internal class SafeActions(private val a: KeyboardActions, private val onError: 
     override fun moveCursorVertical(direction: Int) = guard { a.moveCursorVertical(direction) }
     override fun moveCursorHorizontal(direction: Int) = guard { a.moveCursorHorizontal(direction) }
     override fun triggerCreasePulse() = guard { a.triggerCreasePulse() }
+    override fun shiftHold(held: Boolean) = guard { a.shiftHold(held) }
     override fun pickSuggestion(chip: SuggestionChipModel) = guard { a.pickSuggestion(chip) }
     override fun commitText(text: String) = guard { a.commitText(text) }
     override fun commitEmoji(emoji: String) = guard { a.commitEmoji(emoji) }
@@ -610,6 +613,8 @@ class ComposeKeyboardService : InputMethodService(),
     private var expSelEnd = -1
     /** DUO: якорь Shift-выделения трекпадом (позиция курсора в начале выделения). */
     private var selAnchor = -1
+    /** DUO: Shift держат пальцем прямо сейчас. */
+    private var shiftHeld = false
     private var lastCommittedWord = ""
     private var lastTypedChar: Char? = null
     private var undo: UndoAutoCorrectState? = null
@@ -2207,6 +2212,11 @@ class ComposeKeyboardService : InputMethodService(),
     /** DUO: трекпад в центральном виджете — курсор едет всегда, независимо от настройки свайпа по пробелу. */
     override fun moveCursorHorizontal(direction: Int) = moveCursor(direction)
 
+    override fun shiftHold(held: Boolean) {
+        shiftHeld = held
+        if (!held) selAnchor = -1
+    }
+
     // >>> DUO-BEGIN: cursor trackpad & Shift-selection (docs/DUO_MERGE.md)
     override fun moveCursorVertical(direction: Int) {
         val ic = currentInputConnection ?: return
@@ -2215,7 +2225,8 @@ class ComposeKeyboardService : InputMethodService(),
         autoSpace = false
         lastActionWasSpace = false
         lastCommittedWord = ""
-        if (kb.shift != ShiftState.OFF) {
+        // DUO: выделение только когда Shift именно удерживают пальцем. Caps Lock — не выделяем
+        if (kb.shift == ShiftState.SINGLE && shiftHeld) {
             // DUO: выделение через setSelection — работает во всех приложениях, а не только в нашем тестовом поле
             val target = lineTarget(ic, cursorPos(ic), direction)
             extendSelection(ic, target)
@@ -2285,7 +2296,8 @@ class ComposeKeyboardService : InputMethodService(),
         autoSpace = false
         lastActionWasSpace = false
         lastCommittedWord = ""
-        if (kb.shift != ShiftState.OFF) {
+        // DUO: выделение только когда Shift именно удерживают пальцем. Caps Lock — не выделяем
+        if (kb.shift == ShiftState.SINGLE && shiftHeld) {
             // DUO: выделение через setSelection — работает во всех приложениях
             extendSelection(ic, cursorPos(ic) + direction)
         } else {
