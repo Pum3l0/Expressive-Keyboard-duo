@@ -17,6 +17,9 @@ An advanced Android keyboard in the Material 3 Expressive style, specialized for
 > **Foldable Optimization**: Tested and verified on **Google Pixel Fold** (Android 14 / 15 / 16).
 > Features a two-pane split settings layout, adaptive posture profiles, and ergonomic split key layouts.
 
+**Credits** — the original keyboard is made by [@Shahedeer](https://t.me/Shahedeer) (channel: [@materialyouboss](https://t.me/materialyouboss)).
+This foldable fork is maintained by **[@pumeloo](https://t.me/pumeloo)**.
+
 ---
 
 ## 🚀 Key Duo Features (Foldable & Large Screens)
